@@ -70,7 +70,7 @@ def _build_launch_kwargs(headless: bool) -> dict:
     if LOCAL_CHROME_PATH:
         launch_kwargs["executable_path"] = LOCAL_CHROME_PATH
     else:
-        launch_kwargs["channel"] = "chrome"
+        launch_kwargs["channel"] = "chromium"
     return launch_kwargs
 
 

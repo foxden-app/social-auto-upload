@@ -1,0 +1,4 @@
+interface:
+  display_name: "视频号上传"
+  short_description: "通过 sau CLI 完成视频号账号登录、检查与双封面视频发布"
+  default_prompt: "使用 sau CLI 检查视频号账号并上传带横竖封面的视频。"

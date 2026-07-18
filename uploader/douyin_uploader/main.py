@@ -68,7 +68,14 @@ async def cookie_auth(account_file):
     # 即便有头，页面慢/瞬时跳转仍会让 wait_for_url(精确URL,5s) 误判→重试3次+宽松判定(URL含 content/upload 且无登录文案)。
     # 允许 linux server 用户通过 env var 强制无头: DOUYIN_COOKIE_AUTH_HEADLESS=true
     use_headless = os.environ.get("DOUYIN_COOKIE_AUTH_HEADLESS", "").lower() in ("1", "true", "yes")
-    launch_kwargs = {"headless": use_headless, "channel": "chrome", "args": ["--no-sandbox", "--disable-blink-features=AutomationControlled"]}
+    launch_kwargs = {
+        "headless": use_headless,
+        "channel": "chromium",
+        "args": ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+    }
+    if LOCAL_CHROME_PATH:
+        launch_kwargs.pop("channel")
+        launch_kwargs["executable_path"] = LOCAL_CHROME_PATH
     for _attempt in range(3):
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(**launch_kwargs)

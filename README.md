@@ -76,7 +76,7 @@
 | Bilibili | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | 运行时自动准备 `biliup` |
 | 小红书（浏览器版） | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 浏览器自动化，CLI/Skill 已接入 |
 | 快手 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 浏览器自动化，CLI/Skill 初版已接入 |
-| 视频号 | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | 对应 `tencent_uploader` |
+| 视频号 | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | 支持横竖双封面、草稿和统一 CLI |
 | 百家号 | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | 浏览器自动化 |
 | TikTok | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | 当前示例走 Chrome 版实现 |
 | YouTube | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | 浏览器自动化（Studio），支持加入播放列表/可见性 |
@@ -113,7 +113,7 @@ AI的发展毋庸置疑，希望你遇到这种安装和使用，不要再怯场
 
 - 优先按当前主线安装项目
 - 优先使用 `uv`、`sau` CLI 和 `skills/`
-- 先验证 `bilibili`、`douyin`、`kuaishou`、`xiaohongshu` 四个平台入口是否可用
+- 先验证 `bilibili`、`douyin`、`kuaishou`、`xiaohongshu`、`tencent` 五个平台入口是否可用
 
 
 ### 补充说明：
@@ -124,6 +124,7 @@ AI的发展毋庸置疑，希望你遇到这种安装和使用，不要再怯场
 - agent / skill 请看：[Kuaishou Upload Skill](./skills/kuaishou-upload/SKILL.md)
 - agent / skill 请看：[Xiaohongshu Upload Skill](./skills/xiaohongshu-upload/SKILL.md)
 - agent / skill 请看：[Bilibili Upload Skill](./skills/bilibili-upload/SKILL.md)
+- agent / skill 请看：[Tencent Upload Skill](./skills/tencent-upload/SKILL.md)
 - 历史 Web 说明请看：[历史 Web 版本说明](./docs/legacy-web.md)
 - 其他单平台 skill 与整合型 skill 仍在开发中
 - `requirements.txt` 目前主要用于历史兼容路径，普通用户不需要优先使用它

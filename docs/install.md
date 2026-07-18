@@ -90,6 +90,8 @@ sau douyin --help
 sau kuaishou --help
 sau xiaohongshu --help
 sau bilibili --help
+sau tencent --help
+sau youtube --help
 ```
 
 如果命令找不到，优先确认：
@@ -201,6 +203,8 @@ sau douyin --help
 sau kuaishou --help
 sau xiaohongshu --help
 sau bilibili --help
+sau tencent --help
+sau youtube --help
 ```
 
 6. 如果用户的目标是抖音或快手的登录、cookie 校验、视频上传、图文上传，优先走 CLI：
@@ -224,6 +228,10 @@ sau xiaohongshu upload-note
 sau bilibili login
 sau bilibili check
 sau bilibili upload-video
+
+sau tencent login
+sau tencent check
+sau tencent upload-video
 ```
 
 7. 如果用户明确在使用 skill 系统，再引导其阅读：
@@ -236,6 +244,8 @@ sau bilibili upload-video
 - `skills/xiaohongshu-upload/references/cli-contract.md`
 - `skills/bilibili-upload/SKILL.md`
 - `skills/bilibili-upload/references/cli-contract.md`
+- `skills/tencent-upload/SKILL.md`
+- `skills/tencent-upload/references/cli-contract.md`
 
 ### 对 agent 的额外说明
 

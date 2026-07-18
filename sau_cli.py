@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import redirect_stdout
+import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -571,6 +573,60 @@ def add_runtime_flags(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(headless=True)
 
 
+def add_machine_output_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Write one machine-readable JSON result to stdout; command logs go to stderr",
+    )
+    parser.add_argument(
+        "--result-file",
+        type=Path,
+        help="Atomically write the machine-readable JSON result to this path",
+    )
+
+
+def build_machine_result(
+    args: argparse.Namespace,
+    exit_code: int,
+    error: str | None = None,
+) -> dict:
+    payload = {
+        "schema_version": 1,
+        "success": exit_code == 0,
+        "exit_code": exit_code,
+        "status": "succeeded" if exit_code == 0 else "failed",
+        "platform": getattr(args, "platform", None),
+        "action": getattr(args, "action", None),
+        "account": getattr(args, "account", None),
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+    }
+    file_path = getattr(args, "file", None)
+    if file_path:
+        payload["file"] = str(Path(file_path).expanduser().resolve())
+    schedule = getattr(args, "schedule", None)
+    if isinstance(schedule, datetime):
+        payload["scheduled_at"] = schedule.isoformat()
+    elif schedule:
+        payload["scheduled_at"] = str(schedule)
+    if error:
+        payload["error"] = error
+    return payload
+
+
+def emit_machine_result(args: argparse.Namespace, payload: dict) -> None:
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    result_file = getattr(args, "result_file", None)
+    if result_file:
+        destination = Path(result_file).expanduser().resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(destination.suffix + ".tmp")
+        temporary.write_text(serialized + "\n", encoding="utf-8")
+        temporary.replace(destination)
+    if getattr(args, "json", False):
+        print(serialized)
+
+
 def build_parser() -> argparse.ArgumentParser:
     schedule_help = SCHEDULE_FORMAT.replace("%", "%%")
     parser = argparse.ArgumentParser(
@@ -585,6 +641,7 @@ def build_parser() -> argparse.ArgumentParser:
     for action_name in ("login", "check"):
         action_parser = douyin_actions.add_parser(action_name, help=f"Douyin {action_name}")
         action_parser.add_argument("--account", required=True, help="Douyin user-defined account_name")
+        add_machine_output_flags(action_parser)
         if action_name == "login":
             add_runtime_flags(action_parser)
 
@@ -600,6 +657,7 @@ def build_parser() -> argparse.ArgumentParser:
     upload_video_parser.add_argument("--thumbnail-portrait", type=existing_file_path, help="Optional 3:4 portrait thumbnail path")
     upload_video_parser.add_argument("--product-link", default="", help="Optional product link")
     upload_video_parser.add_argument("--product-title", default="", help="Optional product title")
+    add_machine_output_flags(upload_video_parser)
     add_runtime_flags(upload_video_parser)
 
     upload_note_parser = douyin_actions.add_parser("upload-note", help="Upload one note to Douyin")
@@ -611,6 +669,7 @@ def build_parser() -> argparse.ArgumentParser:
     upload_note_parser.add_argument("--tags", default="", help="Comma-separated tags, such as tag1,tag2")
     upload_note_parser.add_argument("--bgm", default="", help="BGM music name to search and select")
     upload_note_parser.add_argument("--schedule", type=schedule_value, help=f"Schedule time in {schedule_help}")
+    add_machine_output_flags(upload_note_parser)
     add_runtime_flags(upload_note_parser)
 
     kuaishou_parser = platform_parsers.add_parser("kuaishou", help="Kuaishou operations")
@@ -619,6 +678,7 @@ def build_parser() -> argparse.ArgumentParser:
     for action_name in ("login", "check"):
         action_parser = kuaishou_actions.add_parser(action_name, help=f"Kuaishou {action_name}")
         action_parser.add_argument("--account", required=True, help="Kuaishou user-defined account_name")
+        add_machine_output_flags(action_parser)
         if action_name == "login":
             add_runtime_flags(action_parser)
 
@@ -630,6 +690,7 @@ def build_parser() -> argparse.ArgumentParser:
     kuaishou_upload_video_parser.add_argument("--tags", default="", help="Comma-separated tags, such as tag1,tag2")
     kuaishou_upload_video_parser.add_argument("--schedule", type=schedule_value, help=f"Schedule time in {schedule_help}")
     kuaishou_upload_video_parser.add_argument("--thumbnail", type=existing_file_path, help="Optional thumbnail path")
+    add_machine_output_flags(kuaishou_upload_video_parser)
     add_runtime_flags(kuaishou_upload_video_parser)
 
     kuaishou_upload_note_parser = kuaishou_actions.add_parser("upload-note", help="Upload one note to Kuaishou")
@@ -639,6 +700,7 @@ def build_parser() -> argparse.ArgumentParser:
     kuaishou_upload_note_parser.add_argument("--note", default="", help="Optional note content")
     kuaishou_upload_note_parser.add_argument("--tags", default="", help="Comma-separated tags, such as tag1,tag2")
     kuaishou_upload_note_parser.add_argument("--schedule", type=schedule_value, help=f"Schedule time in {schedule_help}")
+    add_machine_output_flags(kuaishou_upload_note_parser)
     add_runtime_flags(kuaishou_upload_note_parser)
 
     xiaohongshu_parser = platform_parsers.add_parser("xiaohongshu", help="Xiaohongshu operations")
@@ -647,6 +709,7 @@ def build_parser() -> argparse.ArgumentParser:
     for action_name in ("login", "check"):
         action_parser = xiaohongshu_actions.add_parser(action_name, help=f"Xiaohongshu {action_name}")
         action_parser.add_argument("--account", required=True, help="Xiaohongshu user-defined account_name")
+        add_machine_output_flags(action_parser)
         if action_name == "login":
             add_runtime_flags(action_parser)
 
@@ -658,6 +721,7 @@ def build_parser() -> argparse.ArgumentParser:
     xiaohongshu_upload_video_parser.add_argument("--tags", default="", help="Comma-separated tags, such as tag1,tag2")
     xiaohongshu_upload_video_parser.add_argument("--schedule", type=schedule_value, help=f"Schedule time in {schedule_help}")
     xiaohongshu_upload_video_parser.add_argument("--thumbnail", type=existing_file_path, help="Optional thumbnail path")
+    add_machine_output_flags(xiaohongshu_upload_video_parser)
     add_runtime_flags(xiaohongshu_upload_video_parser)
 
     xiaohongshu_upload_note_parser = xiaohongshu_actions.add_parser("upload-note", help="Upload one note to Xiaohongshu")
@@ -667,6 +731,7 @@ def build_parser() -> argparse.ArgumentParser:
     xiaohongshu_upload_note_parser.add_argument("--note", default="", help="Optional note content")
     xiaohongshu_upload_note_parser.add_argument("--tags", default="", help="Comma-separated tags, such as tag1,tag2")
     xiaohongshu_upload_note_parser.add_argument("--schedule", type=schedule_value, help=f"Schedule time in {schedule_help}")
+    add_machine_output_flags(xiaohongshu_upload_note_parser)
     add_runtime_flags(xiaohongshu_upload_note_parser)
 
     bilibili_parser = platform_parsers.add_parser("bilibili", help="Bilibili operations")
@@ -675,6 +740,7 @@ def build_parser() -> argparse.ArgumentParser:
     for action_name in ("login", "check"):
         action_parser = bilibili_actions.add_parser(action_name, help=f"Bilibili {action_name}")
         action_parser.add_argument("--account", required=True, help="Bilibili user-defined account_name")
+        add_machine_output_flags(action_parser)
 
     bilibili_upload_video_parser = bilibili_actions.add_parser("upload-video", help="Upload one video to Bilibili")
     bilibili_upload_video_parser.add_argument("--account", required=True, help="Bilibili user-defined account_name")
@@ -685,6 +751,7 @@ def build_parser() -> argparse.ArgumentParser:
     bilibili_upload_video_parser.add_argument("--tags", default="", help="Comma-separated tags, such as tag1,tag2")
     bilibili_upload_video_parser.add_argument("--thumbnail", type=existing_file_path, help="Optional Bilibili cover image path")
     bilibili_upload_video_parser.add_argument("--schedule", type=schedule_value, help=f"Schedule time in {schedule_help}")
+    add_machine_output_flags(bilibili_upload_video_parser)
 
     tencent_parser = platform_parsers.add_parser("tencent", help="Tencent/WeChat Channels operations")
     tencent_actions = tencent_parser.add_subparsers(dest="action", required=True)
@@ -692,6 +759,7 @@ def build_parser() -> argparse.ArgumentParser:
     for action_name in ("login", "check"):
         action_parser = tencent_actions.add_parser(action_name, help=f"Tencent/WeChat Channels {action_name}")
         action_parser.add_argument("--account", required=True, help="Tencent user-defined account_name")
+        add_machine_output_flags(action_parser)
         if action_name == "login":
             add_runtime_flags(action_parser)
 
@@ -708,6 +776,7 @@ def build_parser() -> argparse.ArgumentParser:
     tencent_upload_video_parser.add_argument("--short-title", help="Optional WeChat Channels short title")
     tencent_upload_video_parser.add_argument("--category", help="Optional original content category")
     tencent_upload_video_parser.add_argument("--draft", action="store_true", help="Save as draft instead of publishing")
+    add_machine_output_flags(tencent_upload_video_parser)
     add_runtime_flags(tencent_upload_video_parser)
 
     youtube_parser = platform_parsers.add_parser("youtube", help="YouTube operations")
@@ -716,6 +785,7 @@ def build_parser() -> argparse.ArgumentParser:
     for action_name in ("login", "check"):
         action_parser = youtube_actions.add_parser(action_name, help=f"YouTube {action_name}")
         action_parser.add_argument("--account", required=True, help="YouTube user-defined account_name")
+        add_machine_output_flags(action_parser)
         if action_name == "login":
             add_runtime_flags(action_parser)
 
@@ -729,6 +799,7 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_upload_video_parser.add_argument("--playlist", help="Optional playlist name to add the video to (for series)")
     youtube_upload_video_parser.add_argument(
         "--visibility", default="public", choices=["public", "unlisted", "private"], help="Video visibility")
+    add_machine_output_flags(youtube_upload_video_parser)
     add_runtime_flags(youtube_upload_video_parser)
     return parser
 
@@ -1015,11 +1086,19 @@ async def dispatch(args: argparse.Namespace) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
+    error = None
     try:
-        return asyncio.run(dispatch(args))
+        if getattr(args, "json", False):
+            with redirect_stdout(sys.stderr):
+                exit_code = asyncio.run(dispatch(args))
+        else:
+            exit_code = asyncio.run(dispatch(args))
     except Exception as exc:
+        exit_code = 1
+        error = str(exc)
         print(str(exc), file=sys.stderr)
-        return 1
+    emit_machine_result(args, build_machine_result(args, exit_code, error))
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -10,6 +10,8 @@
 - `douyin`
 - `kuaishou`
 - `xiaohongshu`
+- `tencent`（视频号）
+- `youtube`
 
 ## 这份文档解决什么问题
 
@@ -42,6 +44,8 @@
 - douyin
 - kuaishou
 - xiaohongshu
+- tencent
+- youtube
 
 你的第一目标不是通读全部源码，也不是优先运行历史 examples，而是先把项目安装到“可运行、可验证、可继续执行任务”的状态。
 
@@ -59,6 +63,7 @@
    - `skills/kuaishou-upload/`
    - `skills/xiaohongshu-upload/`
    - `skills/bilibili-upload/`
+   - `skills/tencent-upload/`
 6. 不要默认走历史 `examples/` 和旧 Web 路径，除非当前 CLI 主线不可用。
 7. 如果登录流程生成二维码图片，不要只返回图片路径；请直接展示图片，或者明确告诉我该打开哪个本地图片文件扫码。
 8. 如果是 Bilibili 登录，不要在非交互环境里强行代跑；应改为指导我在本地真实终端执行。
@@ -68,6 +73,8 @@
    - `sau kuaishou --help`
    - `sau xiaohongshu --help`
    - `sau bilibili --help`
+   - `sau tencent --help`
+   - `sau youtube --help`
 10. 完成后，请明确输出：
    - 你实际执行了哪些命令
    - 哪些验证通过了
@@ -94,7 +101,7 @@
 ### 做一次 CLI 可用性检查
 
 ```text
-请检查 bilibili、douyin、kuaishou、xiaohongshu 四个平台的 CLI 入口是否都可用，并告诉我缺什么依赖。
+请检查 bilibili、douyin、kuaishou、xiaohongshu、tencent 五个平台的 CLI 入口是否都可用，并告诉我缺什么依赖。
 ```
 
 ### 做一次真实上传
@@ -127,9 +134,9 @@
 - 再发完整启动提示词
 - 后续按“安装 -> 验证 -> 登录 -> 上传”顺序继续给任务
 
-## 为什么不按平台拆四套提示词
+## 为什么不按平台拆多套提示词
 
-因为这个项目现在已经有统一的 CLI 主线。
+因为这个项目现在已经有统一的 CLI 主线。视频矩阵使用 `bilibili`、`douyin`、`kuaishou`、`xiaohongshu` 和 `tencent`；`youtube` 作为额外目标使用同一入口。
 
 用户第一次把仓库交给 agent 时，更需要的是：
 
@@ -144,5 +151,7 @@
 - `douyin`
 - `kuaishou`
 - `xiaohongshu`
+- `tencent`
+- `youtube`
 
-这样比给用户准备四套平台 prompt 更稳，也更容易维护。
+这样比给用户准备多套启动 prompt 更稳，也更容易维护。

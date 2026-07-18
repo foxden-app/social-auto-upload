@@ -6,6 +6,8 @@
 - `kuaishou`
 - `xiaohongshu`
 - `bilibili`
+- `tencent`（视频号）
+- `youtube`
 
 实现说明：
 
@@ -16,6 +18,7 @@
   - `skills/kuaishou-upload/`
   - `skills/xiaohongshu-upload/`
   - `skills/bilibili-upload/`
+  - `skills/tencent-upload/`
 
 ## 安装 CLI 入口
 
@@ -32,6 +35,8 @@ sau douyin --help
 sau kuaishou --help
 sau xiaohongshu --help
 sau bilibili --help
+sau tencent --help
+sau youtube --help
 ```
 
 ## 安装 patchright 浏览器
@@ -103,6 +108,16 @@ sau bilibili upload-video --account <account_name> --file videos/demo.mp4 --titl
 - 如果上游 GitHub Release 有更新，运行时会先自动更新
 - `sau bilibili login --account <name>` 建议由用户自己在本地真实终端里执行；如果终端里的二维码显示不完整，可直接打开当前目录下的 `qrcode.png` 扫码
 
+## 视频号 CLI 子命令
+
+```bash
+sau tencent login --account <account_name> --headed
+sau tencent check --account <account_name>
+sau tencent upload-video --account <account_name> --file videos/demo.mp4 --title "示例标题" --desc "示例简介" --thumbnail-landscape covers/cover-4x3.png --thumbnail-portrait covers/cover-3x4.png
+```
+
+视频号支持 `--schedule`、`--draft`、`--short-title`、`--category`，以及四比三横封面和三比四竖封面。
+
 ## 登录二维码说明
 
 - 抖音、快手、小红书登录过程中，CLI / uploader 可能会生成临时二维码图片
@@ -113,7 +128,7 @@ sau bilibili upload-video --account <account_name> --file videos/demo.mp4 --titl
 
 ## 定时发布
 
-抖音、快手、小红书的图文和视频上传，以及 Bilibili 的视频上传都支持 `--schedule`。只要传了 `--schedule`，CLI 就会自动切换到对应平台的定时发布策略；不传则默认立即发布。
+抖音、快手、小红书的图文和视频上传，以及 Bilibili、视频号的视频上传都支持 `--schedule`。只要传了 `--schedule`，CLI 就会自动切换到对应平台的定时发布策略；不传则默认立即发布。
 
 ```bash
 sau douyin upload-video --account <account_name> --file videos/demo.mp4 --title "示例标题" --desc "示例简介" --schedule "2026-03-24 21:30"
@@ -123,6 +138,7 @@ sau kuaishou upload-note --account <account_name> --images videos/1.png videos/2
 sau xiaohongshu upload-video --account <account_name> --file videos/demo.mp4 --title "示例标题" --desc "示例简介" --schedule "2026-03-24 21:30"
 sau xiaohongshu upload-note --account <account_name> --images videos/1.png videos/2.png videos/3.png --title "图文标题" --note "图文示例" --schedule "2026-03-24 21:30"
 sau bilibili upload-video --account <account_name> --file videos/demo.mp4 --title "示例标题" --desc "示例简介" --tid 249 --schedule "2026-03-24 21:30"
+sau tencent upload-video --account <account_name> --file videos/demo.mp4 --title "示例标题" --schedule "2026-03-24 21:30"
 ```
 
 ## 运行时参数
@@ -197,3 +213,14 @@ Bilibili 额外要求：
 - 小红书：支持多张图片，正文 `--note` 可选，但 `--title` 建议始终显式传入
 
 后续维护 CLI 时，优先看 `sau_cli.py`、`uploader/` 和 `skills/`。
+
+## 机器可读结果
+
+所有 `login`、`check` 和上传命令支持：
+
+```bash
+--json
+--result-file <path>
+```
+
+`--json` 会把命令过程输出转到标准错误，标准输出只保留最终 JSON。`--result-file` 会原子写入同一结果，矩阵调度器应以结果文件和进程退出码共同判断成功。
