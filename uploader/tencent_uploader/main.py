@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
 import os
 from datetime import datetime
@@ -133,34 +134,42 @@ async def cookie_auth(account_file):
             await browser.close()
 
 
-async def _extract_tencent_qrcode_src(page: Page) -> str:
-    if hasattr(page, "frame_locator"):
-        try:
-            iframe_locator = page.frame_locator('[src*="login-for-iframe"]')
-            qr_code_img = iframe_locator.locator('div#app img.qrcode').first
-            await qr_code_img.wait_for(state="visible", timeout=30000)
-            src = await qr_code_img.get_attribute("src")
-            if src and src.startswith("data:image/"):
-                return src
-        except Exception:
-            pass
+async def _qrcode_locator_data_url(qr_code_img) -> str:
+    src = await qr_code_img.get_attribute("src")
+    if src and src.startswith("data:image/"):
+        return src
+    if src:
+        image_bytes = await qr_code_img.screenshot(type="png")
+        return "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
+    return ""
 
+
+async def _extract_tencent_qrcode_src(page: Page) -> str:
     selector_candidates = [
+        'img[src*="open.weixin.qq.com/connect/qrcode/"]',
+        "img.js_qrcode_img",
+        "img.web_qrcode_img",
         "div.login-qrcode-wrap img.qrcode",
         "div.qrcode-wrap img.qrcode",
         "img.qrcode",
         'img[src^="data:image/"]',
     ]
-    for selector in selector_candidates:
-        qr_code_img = page.locator(selector).first
-        try:
-            if not await qr_code_img.count() or not await qr_code_img.is_visible():
-                continue
-            src = await qr_code_img.get_attribute("src")
-            if src and src.startswith("data:image/"):
-                return src
-        except Exception:
-            continue
+
+    for _ in range(60):
+        for frame in page.frames:
+            for selector in selector_candidates:
+                try:
+                    candidates = frame.locator(selector)
+                    for index in range(await candidates.count()):
+                        qr_code_img = candidates.nth(index)
+                        if not await qr_code_img.is_visible():
+                            continue
+                        data_url = await _qrcode_locator_data_url(qr_code_img)
+                        if data_url:
+                            return data_url
+                except Exception:
+                    continue
+        await page.wait_for_timeout(500)
 
     raise RuntimeError("未获取到视频号登录二维码地址")
 
