@@ -63,11 +63,12 @@ async def _read_verify_code(code_file: str) -> str:
         return ""
 
 
-async def cookie_auth(account_file):
-    # 抖音无头会撞反爬墙→content/upload 跳登录→误判 cookie 失效（间歇性）。校验必须有头。
+async def cookie_auth(account_file, headless: bool | None = None):
+    # 抖音无头偶尔会撞反爬墙；未显式指定时默认有头校验，CLI 登录则继承运行模式。
     # 即便有头，页面慢/瞬时跳转仍会让 wait_for_url(精确URL,5s) 误判→重试3次+宽松判定(URL含 content/upload 且无登录文案)。
     # 允许 linux server 用户通过 env var 强制无头: DOUYIN_COOKIE_AUTH_HEADLESS=true
-    use_headless = os.environ.get("DOUYIN_COOKIE_AUTH_HEADLESS", "").lower() in ("1", "true", "yes")
+    env_headless = os.environ.get("DOUYIN_COOKIE_AUTH_HEADLESS", "").lower() in ("1", "true", "yes")
+    use_headless = env_headless if headless is None else headless
     launch_kwargs = {
         "headless": use_headless,
         "channel": "chromium",
@@ -96,7 +97,7 @@ async def cookie_auth(account_file):
 
 
 async def douyin_setup(account_file, handle=False, return_detail=False, qrcode_callback=None, headless: bool = LOCAL_CHROME_HEADLESS, cdp_url: str | None = None):
-    if not os.path.exists(account_file) or not await cookie_auth(account_file):
+    if not os.path.exists(account_file) or not await cookie_auth(account_file, headless=headless):
         if not handle:
             result = _build_login_result(False, "cookie_invalid", "cookie文件不存在或已失效", account_file)
             return result if return_detail else False
@@ -261,7 +262,7 @@ async def douyin_cookie_gen(
             if result["success"]:
                 await asyncio.sleep(2)
                 await context.storage_state(path=account_file)
-                if not await cookie_auth(account_file):
+                if not await cookie_auth(account_file, headless=headless):
                     result = _build_login_result(
                         False,
                         "cookie_invalid",
@@ -303,7 +304,7 @@ class DouYinBaseUploader(BaseVideoUploader):
     async def validate_base_args(self):
         if not os.path.exists(self.account_file):
             raise RuntimeError(f"cookie文件不存在，请先完成抖音登录: {self.account_file}")
-        if not await cookie_auth(self.account_file):
+        if not await cookie_auth(self.account_file, headless=self.headless):
             raise RuntimeError(f"cookie文件已失效，请先完成抖音登录: {self.account_file}")
         if self.publish_strategy not in {DOUYIN_PUBLISH_STRATEGY_IMMEDIATE, DOUYIN_PUBLISH_STRATEGY_SCHEDULED}:
             raise ValueError(f"不支持的发布策略: {self.publish_strategy}")
