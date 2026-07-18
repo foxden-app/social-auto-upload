@@ -524,20 +524,25 @@ class TencentBaseUploader(BaseVideoUploader):
                     continue
             return None
 
-        fi = await find_file_input()
-        if fi is None:
-            # 助手落在首页：先点「发表视频」唤出编辑器与上传控件
-            publish_btn = page.get_by_text("发表视频").first
-            if await publish_btn.count():
-                await publish_btn.click()
-                await asyncio.sleep(3)
-            for _ in range(20):
-                fi = await find_file_input()
-                if fi is not None:
+        fi = None
+        for attempt in range(40):
+            fi = await find_file_input()
+            if fi is not None:
+                break
+
+            # 新版视频号会先把 /post/create 重定向到助手首页，再异步恢复编辑器。
+            # 等待期间反复查找首页入口，避免只在入口尚未出现时检查一次。
+            for fr in page.frames:
+                publish_btn = fr.get_by_text("发表视频", exact=True).first
+                if await publish_btn.count() and await publish_btn.is_visible():
+                    await publish_btn.click()
                     break
-                await asyncio.sleep(1)
+
+            if attempt == 15 and "/platform/post/create" not in page.url:
+                await page.goto(TENCENT_UPLOAD_URL, timeout=120000, wait_until="domcontentloaded")
+            await asyncio.sleep(1)
         if fi is None:
-            raise RuntimeError("未找到视频号文件上传框")
+            raise RuntimeError(f"未找到视频号文件上传框，当前页面: {page.url}")
         await fi.set_input_files(file_path)
 
     async def set_short_title(self, page: Page, title: str, short_title: str | None = None) -> None:
@@ -792,13 +797,13 @@ class TencentVideo(TencentBaseUploader):
                 continue
 
         for title in dialog_titles:
-            cover_dialog = page.locator("div.weui-desktop-dialog").filter(has_text=title).first
+            cover_dialog = page.locator("div.weui-desktop-dialog:visible").filter(has_text=title).first
             if await cover_dialog.count():
                 return cover_dialog
         return None
 
     async def confirm_thumbnail_crop(self, page: Page) -> None:
-        crop_dialog = page.locator("div.weui-desktop-dialog").filter(has_text="裁剪封面图").first
+        crop_dialog = page.locator("div.weui-desktop-dialog:visible").filter(has_text="裁剪封面图").first
         if not await crop_dialog.count():
             return
 

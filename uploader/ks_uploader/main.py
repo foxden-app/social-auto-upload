@@ -537,14 +537,18 @@ class KSVideo(KSBaseUploader):
 
             while True:
                 try:
-                    publish_button = page.get_by_text("发布", exact=True)
-                    if await publish_button.count() > 0:
-                        await publish_button.click()
+                    modal_confirm = page.locator(".ant-modal-confirm-btns button.ant-btn-primary").last
+                    if await modal_confirm.count() > 0 and await modal_confirm.is_visible():
+                        await modal_confirm.click(force=True)
+                    else:
+                        publish_button = page.get_by_text("发布", exact=True)
+                        if await publish_button.count() > 0:
+                            await publish_button.click()
 
                     await asyncio.sleep(1)
-                    confirm_button = page.get_by_text("确认发布")
-                    if await confirm_button.count() > 0:
-                        await confirm_button.click()
+                    confirm_button = page.get_by_text("确认发布").last
+                    if await confirm_button.count() > 0 and await confirm_button.is_visible():
+                        await confirm_button.click(force=True)
 
                     await page.wait_for_url(KUAISHOU_MANAGE_URL_PATTERN, timeout=5000)
                     kuaishou_logger.success(_msg("🥳", "视频发布成功，小人开心收工"))

@@ -514,23 +514,45 @@ class XiaoHongShuVideo(XiaoHongShuBaseUploader):
 
         xiaohongshu_logger.info(_msg("🖼️", "小人准备设置封面"))
 
-        cover_plugin_title = page.locator("div.cover-plugin-title").filter(has_text="设置封面")
-        cover_upload_dialog = cover_plugin_title.locator(
-            "xpath=ancestor::div[contains(@class, 'cover-plugin-preview')]"
-        ).locator("div.cover > div.default:visible")
+        cover_upload_dialog = page.locator(
+            "div.cover-plugin-preview div.cover > div.default:visible"
+        ).first
         await cover_upload_dialog.wait_for(state="visible", timeout=30000)
+        for _ in range(60):
+            cover_style = await cover_upload_dialog.get_attribute("style") or ""
+            if "https://" in cover_style:
+                break
+            await page.wait_for_timeout(1000)
 
-        await cover_upload_dialog.click(force=True)
+        for attempt in range(6):
+            await cover_upload_dialog.scroll_into_view_if_needed()
+            cover_box = await cover_upload_dialog.bounding_box()
+            if cover_box:
+                cover_x = cover_box["x"] + cover_box["width"] / 2
+                cover_y = cover_box["y"] + cover_box["height"] / 2
+                await page.mouse.move(cover_x, cover_y)
+                await page.wait_for_timeout(300)
+                await page.mouse.click(cover_x, cover_y)
+            else:
+                await cover_upload_dialog.click(force=True)
+            await page.wait_for_timeout(1000)
+            modal_count = await page.locator("div.d-modal").count()
+            if modal_count:
+                modal = page.locator("div.d-modal").nth(modal_count - 1)
+                break
+            if attempt == 5:
+                raise RuntimeError("点击封面预览后未出现设置封面弹窗")
 
-        modal = page.locator("div.d-modal.cover-modal")
-        await modal.wait_for(state="visible", timeout=30000)
+        upload_tab = modal.get_by_text("上传封面", exact=True).first
+        if await upload_tab.count() and await upload_tab.is_visible():
+            await upload_tab.click()
 
-        file_input = modal.locator('input[type="file"][accept*="image"]').first
+        file_input = modal.locator('input[type="file"]').first
         await file_input.wait_for(state="attached", timeout=10000)
         await file_input.set_input_files(thumbnail_path)
         await page.wait_for_timeout(2000)
 
-        confirm_button = modal.locator("button.mojito-button").filter(has_text="确定").first
+        confirm_button = modal.get_by_role("button", name="确定", exact=True).first
         await confirm_button.wait_for(state="visible", timeout=10000)
         await confirm_button.click()
 
@@ -545,13 +567,20 @@ class XiaoHongShuVideo(XiaoHongShuBaseUploader):
         )
         await page.goto(publish_url)
         await page.wait_for_url(publish_url)
-        await page.locator("div[class^='upload-content'] input[class='upload-input']").set_input_files(self.file_path)
+        file_input = page.locator("div[class^='upload-content'] input[class='upload-input']")
+        xiaohongshu_logger.info(_msg("📦", "小人正在把视频交给浏览器"))
+        await asyncio.wait_for(file_input.set_input_files(self.file_path), timeout=60)
+        xiaohongshu_logger.success(_msg("🥳", "浏览器已经接收视频文件"))
 
+        upload_checks = 0
         while True:
+            upload_checks += 1
             try:
-                upload_input = await page.wait_for_selector('input.upload-input', timeout=3000)
-                preview_new = await upload_input.query_selector(
-                    'xpath=following-sibling::div[contains(@class, "preview-new")]')
+                upload_input = await page.query_selector('input.upload-input')
+                preview_new = None
+                if upload_input:
+                    preview_new = await upload_input.query_selector(
+                        'xpath=following-sibling::div[contains(@class, "preview-new")]')
                 if preview_new:
                     # 获取整个预览区域的文本，更鲁棒地判断上传状态
                     all_text = await preview_new.inner_text()
@@ -575,9 +604,25 @@ class XiaoHongShuVideo(XiaoHongShuBaseUploader):
                         xiaohongshu_logger.debug(_msg("🧍", f"预览区域内容: {normalized_text}"))
                     xiaohongshu_logger.debug(_msg("🧍", "还没看到上传成功标识，小人继续等一会"))
                 else:
-                    # 尝试检查标题输入框是否已经出现，如果是，说明已经进入编辑状态
+                    # 新版页面会在视频仍处于「上传中」时提前显示标题框。
+                    # 只有上传提示消失后，标题框才能作为进入编辑状态的依据。
+                    upload_status = "\n".join(
+                        await page.locator(".cover-container").all_inner_texts()
+                    )
+                    if upload_checks % 10 == 0 and upload_status:
+                        normalized_status = upload_status.strip().replace("\n", " ")
+                        xiaohongshu_logger.info(_msg("🏃", f"视频上传状态: {normalized_status}"))
                     title_container = page.locator('input[placeholder*="填写标题"]')
-                    if await title_container.count() > 0 and await title_container.is_visible():
+                    upload_nearly_finished = "99%" in upload_status
+                    if (
+                        ("上传中" not in upload_status or upload_nearly_finished)
+                        and await title_container.count() > 0
+                        and await title_container.is_visible()
+                    ):
+                        if upload_nearly_finished:
+                            xiaohongshu_logger.info(
+                                _msg("🏃", "视频已到百分之九十九，先填写发布信息并等待平台收尾")
+                            )
                         xiaohongshu_logger.success(_msg("🥳", "虽然没看到预览区，但标题框出来了，小人继续"))
                         break
                     xiaohongshu_logger.debug(_msg("🧍", "还没拿到预览区域，小人继续等一会"))
