@@ -7,6 +7,13 @@ from uploader.tencent_uploader import main as tencent
 
 
 class TencentLoginQrcodeTests(unittest.TestCase):
+    def test_title_sanitizer_preserves_hotspot_words(self):
+        title = "二零二六世界人工智能大会｜王坚谈科学基础模型（科技相声版）"
+
+        cleaned = tencent.sanitize_tencent_title(title)
+
+        self.assertEqual(cleaned, "二零二六世界人工智能大会：王坚谈科学基础模型 科技相声版")
+
     def test_remote_qrcode_is_converted_to_data_url(self):
         locator = AsyncMock()
         locator.get_attribute.return_value = "https://open.weixin.qq.com/connect/qrcode/demo"

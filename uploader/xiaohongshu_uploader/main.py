@@ -28,6 +28,16 @@ XHS_LOGIN_BOX_SELECTOR = "div[class*='login-box']"
 XHS_LOGIN_SWITCH_SELECTOR = "img.css-wemwzq"
 XIAOHONGSHU_PUBLISH_STRATEGY_IMMEDIATE = "immediate"
 XIAOHONGSHU_PUBLISH_STRATEGY_SCHEDULED = "scheduled"
+XHS_UPLOAD_COMPLETE_MARKERS = (
+    "上传成功",
+    "分辨率",
+    "检测为高清视频",
+    "重新上传",
+    "编辑封面",
+    "已上传",
+    "已选择",
+    "100%",
+)
 
 
 def _build_xhs_creator_url(path: str) -> str:
@@ -42,6 +52,10 @@ def _build_xhs_creator_url(path: str) -> str:
 
 def _msg(emoji: str, text: str) -> str:
     return f"{emoji} {text}"
+
+
+def _video_upload_is_complete(text: str) -> bool:
+    return any(marker in text for marker in XHS_UPLOAD_COMPLETE_MARKERS)
 
 
 async def _emit_qrcode_callback(qrcode_callback, payload: dict):
@@ -573,24 +587,38 @@ class XiaoHongShuVideo(XiaoHongShuBaseUploader):
         xiaohongshu_logger.success(_msg("🥳", "浏览器已经接收视频文件"))
 
         upload_checks = 0
+        upload_wait_started = asyncio.get_running_loop().time()
         while True:
             upload_checks += 1
+            if asyncio.get_running_loop().time() - upload_wait_started > 20 * 60:
+                raise TimeoutError("等待小红书视频上传完成超过二十分钟")
             try:
-                upload_input = await page.query_selector('input.upload-input')
+                upload_input = await asyncio.wait_for(
+                    page.query_selector('input.upload-input'), timeout=10
+                )
                 preview_new = None
                 if upload_input:
-                    preview_new = await upload_input.query_selector(
-                        'xpath=following-sibling::div[contains(@class, "preview-new")]')
+                    preview_new = await asyncio.wait_for(
+                        upload_input.query_selector(
+                            'xpath=following-sibling::div[contains(@class, "preview-new")]'
+                        ),
+                        timeout=10,
+                    )
                 if preview_new:
                     # 获取整个预览区域的文本，更鲁棒地判断上传状态
-                    all_text = await preview_new.inner_text()
-                    upload_success = any(keyword in all_text for keyword in ['上传成功', '分辨率', '重新上传', '编辑封面', '已上传', '已选择', '100%'])
+                    all_text = await asyncio.wait_for(preview_new.inner_text(), timeout=10)
+                    upload_success = _video_upload_is_complete(all_text)
                     
                     if not upload_success:
                         # 检查是否有特定的状态码或百分比
-                        stage_elements = await preview_new.query_selector_all('div.stage')
+                        stage_elements = await asyncio.wait_for(
+                            preview_new.query_selector_all('div.stage'), timeout=10
+                        )
                         for stage in stage_elements:
-                            text_content = await page.evaluate('(element) => element.textContent', stage)
+                            text_content = await asyncio.wait_for(
+                                page.evaluate('(element) => element.textContent', stage),
+                                timeout=10,
+                            )
                             if '上传成功' in text_content or '分辨率' in text_content:
                                 upload_success = True
                                 break
@@ -607,7 +635,10 @@ class XiaoHongShuVideo(XiaoHongShuBaseUploader):
                     # 新版页面会在视频仍处于「上传中」时提前显示标题框。
                     # 只有上传提示消失后，标题框才能作为进入编辑状态的依据。
                     upload_status = "\n".join(
-                        await page.locator(".cover-container").all_inner_texts()
+                        await asyncio.wait_for(
+                            page.locator(".cover-container").all_inner_texts(),
+                            timeout=10,
+                        )
                     )
                     if upload_checks % 10 == 0 and upload_status:
                         normalized_status = upload_status.strip().replace("\n", " ")
@@ -616,8 +647,8 @@ class XiaoHongShuVideo(XiaoHongShuBaseUploader):
                     upload_nearly_finished = "99%" in upload_status
                     if (
                         ("上传中" not in upload_status or upload_nearly_finished)
-                        and await title_container.count() > 0
-                        and await title_container.is_visible()
+                        and await asyncio.wait_for(title_container.count(), timeout=10) > 0
+                        and await asyncio.wait_for(title_container.is_visible(), timeout=10)
                     ):
                         if upload_nearly_finished:
                             xiaohongshu_logger.info(

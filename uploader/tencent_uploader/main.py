@@ -5,6 +5,7 @@ import asyncio
 import base64
 import inspect
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +23,13 @@ TENCENT_UPLOAD_URL = "https://channels.weixin.qq.com/platform/post/create"
 TENCENT_MANAGE_URL = "https://channels.weixin.qq.com/platform/post/list"
 TENCENT_PUBLISH_STRATEGY_IMMEDIATE = "immediate"
 TENCENT_PUBLISH_STRATEGY_SCHEDULED = "scheduled"
+
+
+def sanitize_tencent_title(value: str) -> str:
+    """Keep a title within the punctuation set accepted by WeChat Channels."""
+    title = str(value).replace("｜", "：").replace("|", "：")
+    title = re.sub(r"[，,。.!！；;、（）()【】\[\]…—–_\\/]", " ", title)
+    return re.sub(r"\s+", " ", title).strip()
 
 
 def _msg(emoji: str, text: str) -> str:
@@ -700,34 +708,73 @@ class TencentBaseUploader(BaseVideoUploader):
                 await asyncio.sleep(2)
 
     async def submit_publish(self, page: Page) -> None:
-        while True:
+        target_url_pattern = "**/post/list**"
+        action_name = "保存草稿" if getattr(self, "is_draft", False) else "发表"
+        diagnostic_path = Path(BASE_DIR) / "debug_tencent_submit_failed.png"
+        last_error = ""
+
+        for attempt in range(1, 4):
             try:
                 if getattr(self, "is_draft", False):
                     draft_button = page.locator('div.form-btns button:has-text("保存草稿")')
-                    if await draft_button.count():
-                        await draft_button.click()
-                    await page.wait_for_url("**/post/list**", timeout=5000)
+                    if not await draft_button.count():
+                        raise RuntimeError("未找到保存草稿按钮")
+                    await draft_button.click()
+                    await page.wait_for_url(target_url_pattern, timeout=10000)
                     tencent_logger.success(_msg("🥳", "视频草稿保存成功"))
                 else:
                     publish_button = page.locator('div.form-btns button:has-text("发表")')
-                    if await publish_button.count():
-                        await publish_button.click()
-                    await page.wait_for_url(TENCENT_MANAGE_URL, timeout=5000)
+                    if not await publish_button.count():
+                        raise RuntimeError("未找到发表按钮")
+                    button_class = await publish_button.first.get_attribute("class") or ""
+                    if "disabled" in button_class:
+                        raise RuntimeError(f"发表按钮不可用: class={button_class}")
+                    await publish_button.first.click()
+                    await page.wait_for_url(target_url_pattern, timeout=10000)
                     tencent_logger.success(_msg("🥳", "视频发布成功"))
-                break
+                return
             except Exception as exc:
                 current_url = page.url
                 if getattr(self, "is_draft", False):
                     if "post/list" in current_url or "draft" in current_url:
                         tencent_logger.success(_msg("🥳", "视频草稿保存成功"))
-                        break
+                        return
                 else:
-                    if TENCENT_MANAGE_URL in current_url:
+                    if "post/list" in current_url:
                         tencent_logger.success(_msg("🥳", "视频发布成功"))
-                        break
-                tencent_logger.exception(f"  [-] Exception: {exc}")
-                tencent_logger.info(_msg("🏃", "视频正在发布中..."))
-                await asyncio.sleep(0.5)
+                        return
+                last_error = str(exc)
+                tencent_logger.warning(
+                    _msg("🏃", f"{action_name}后未进入作品列表，第 {attempt}/3 次: {last_error}")
+                )
+                if attempt < 3:
+                    await asyncio.sleep(1)
+
+        visible_messages = []
+        for selector in (
+            "div.weui-desktop-dialog:visible",
+            "[role='dialog']:visible",
+            "[class*='error']:visible",
+            "[class*='tips']:visible",
+            "[class*='message']:visible",
+        ):
+            locator = page.locator(selector)
+            for index in range(min(await locator.count(), 8)):
+                try:
+                    message = (await locator.nth(index).inner_text(timeout=2000)).strip()
+                except Exception:
+                    continue
+                if message and message not in visible_messages:
+                    visible_messages.append(message[:500])
+        try:
+            await page.screenshot(path=str(diagnostic_path), full_page=True)
+        except Exception as exc:
+            tencent_logger.warning(_msg("😵", f"提交失败截图保存失败: {exc}"))
+        details = " | ".join(visible_messages[:8]) or "页面没有暴露可见错误文本"
+        raise RuntimeError(
+            f"视频号{action_name}未完成: {last_error}; url={page.url}; "
+            f"details={details}; screenshot={diagnostic_path}"
+        )
 
 
 class TencentVideo(TencentBaseUploader):
@@ -771,6 +818,12 @@ class TencentVideo(TencentBaseUploader):
         await self.validate_base_args()
         if not self.title or not str(self.title).strip():
             raise ValueError("视频模式下，title 是必须的")
+        original_title = str(self.title)
+        self.title = sanitize_tencent_title(original_title)
+        if self.short_title:
+            self.short_title = sanitize_tencent_title(self.short_title)
+        if self.title != original_title:
+            tencent_logger.info(_msg("🧹", f"视频号标题已按平台规则清理: {self.title}"))
         self.file_path = str(self.validate_video_file(self.file_path))
         if self.thumbnail_landscape_path:
             self.thumbnail_landscape_path = str(self.validate_image_file(self.thumbnail_landscape_path))

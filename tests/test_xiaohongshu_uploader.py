@@ -90,6 +90,14 @@ class RecordingPage:
 
 
 class XiaohongshuUploaderTests(unittest.TestCase):
+    def test_video_upload_complete_recognizes_current_hd_copy(self):
+        self.assertTrue(
+            xhs_main._video_upload_is_complete(
+                "检测为高清视频。清晰的画面能极大提升观看体验"
+            )
+        )
+        self.assertFalse(xhs_main._video_upload_is_complete("上传中 70%"))
+
     def test_creator_urls_keep_xiaohongshu_domain_by_default(self):
         with patch.dict(os.environ, {"SAU_XHS_CREATOR_BASE_URL": ""}):
             self.assertEqual(
