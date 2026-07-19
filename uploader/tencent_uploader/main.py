@@ -120,26 +120,40 @@ async def cookie_auth(account_file):
             context = await browser.new_context(storage_state=account_file)
             context = await set_init_script(context)
             page = await context.new_page()
-            await page.goto(TENCENT_UPLOAD_URL)
-            await page.wait_for_url(TENCENT_UPLOAD_URL, timeout=5000)
+            await page.goto(TENCENT_UPLOAD_URL, timeout=120000, wait_until="domcontentloaded")
+            if await _has_tencent_upload_access(page):
+                tencent_logger.success(_msg("🥳", "cookie 有效"))
+                return True
 
-            login_markers = [
-                page.get_by_text("扫码登录", exact=True).first,
-                page.get_by_text("发表视频", exact=True).first,
-                page.get_by_role("button", name="发表").first,
-            ]
-
-            if await login_markers[0].count():
-                tencent_logger.info(_msg("🥹", "cookie 已失效，得重新登录一下"))
-                return False
-
-            tencent_logger.success(_msg("🥳", "cookie 有效"))
-            return True
+            tencent_logger.info(_msg("🥹", f"cookie 已失效，当前页面: {page.url}"))
+            return False
         except Exception as exc:
             tencent_logger.warning(_msg("😵", f"cookie 校验时出错，按失效处理: {exc}"))
             return False
         finally:
             await browser.close()
+
+
+async def _has_tencent_upload_access(page: Page, max_checks: int = 20) -> bool:
+    for _ in range(max_checks):
+        if "/login" in page.url:
+            return False
+
+        for frame in page.frames:
+            try:
+                if await frame.locator('input[type="file"]').count():
+                    return True
+                publish_entry = frame.get_by_text("发表视频", exact=True).first
+                if await publish_entry.count() and await publish_entry.is_visible():
+                    return True
+                save_draft = frame.get_by_text("保存草稿", exact=True).first
+                if await save_draft.count() and await save_draft.is_visible():
+                    return True
+            except Exception:
+                continue
+
+        await page.wait_for_timeout(500)
+    return False
 
 
 async def _qrcode_locator_data_url(qr_code_img) -> str:

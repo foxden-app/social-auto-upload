@@ -47,6 +47,28 @@ class TencentLoginQrcodeTests(unittest.TestCase):
         expected = base64.b64encode(b"qr-image").decode("ascii")
         self.assertEqual(data_url, f"data:image/png;base64,{expected}")
 
+    def test_upload_access_rejects_login_redirect(self):
+        page = AsyncMock()
+        page.url = "https://channels.weixin.qq.com/login.html"
+        page.frames = []
+
+        self.assertFalse(asyncio.run(tencent._has_tencent_upload_access(page, max_checks=1)))
+
+    def test_upload_access_requires_a_real_publish_marker(self):
+        missing = AsyncMock()
+        missing.count.return_value = 0
+        missing.first = missing
+        upload_input = AsyncMock()
+        upload_input.count.return_value = 1
+        frame = Mock()
+        frame.locator.side_effect = lambda selector: upload_input if selector == 'input[type="file"]' else missing
+        frame.get_by_text.return_value = missing
+        page = AsyncMock()
+        page.url = "https://channels.weixin.qq.com/platform/post/create"
+        page.frames = [frame]
+
+        self.assertTrue(asyncio.run(tencent._has_tencent_upload_access(page, max_checks=1)))
+
 
 if __name__ == "__main__":
     unittest.main()
