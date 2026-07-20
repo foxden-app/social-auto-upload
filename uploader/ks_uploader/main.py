@@ -445,7 +445,9 @@ class KSVideo(KSBaseUploader):
         await confirm_button.wait_for(state="visible", timeout=10000)
         await confirm_button.click()
 
-        await modal.wait_for(state="hidden", timeout=30000)
+        # Large cover images can remain in the crop modal while Kuaishou
+        # finishes server-side processing after the confirm click.
+        await modal.wait_for(state="hidden", timeout=90000)
         kuaishou_logger.success(_msg("🥳", "封面已经设置完成"))
 
     async def upload(self, playwright: Playwright) -> None:
