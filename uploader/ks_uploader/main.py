@@ -506,7 +506,7 @@ class KSVideo(KSBaseUploader):
                 await page.keyboard.type(f"#{tag} ")
                 await asyncio.sleep(2)
 
-            max_retries = 60
+            max_retries = 300
             retry_count = 0
             while retry_count < max_retries:
                 try:
@@ -528,7 +528,7 @@ class KSVideo(KSBaseUploader):
                 retry_count += 1
 
             if retry_count == max_retries:
-                kuaishou_logger.warning(_msg("😵", "超过最大重试次数，视频上传可能未完成"))
+                raise TimeoutError("等待快手视频上传完成超时")
 
             await self.set_thumbnail(page)
 
