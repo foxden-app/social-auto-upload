@@ -899,6 +899,7 @@ class TencentVideo(TencentBaseUploader):
         ).first
         await confirm_button.wait_for(state="visible", timeout=10000)
         await confirm_button.click()
+        await cover_dialog.wait_for(state="hidden", timeout=10000)
 
     async def set_single_thumbnail(
         self,
@@ -910,14 +911,14 @@ class TencentVideo(TencentBaseUploader):
     ) -> None:
         cover_dialog = await self.open_thumbnail_dialog(page, selectors, dialog_titles)
         if not cover_dialog:
-            tencent_logger.info(_msg("🧍", f"当前页面没有出现{label}封面编辑弹窗，小人先跳过"))
-            return
+            tencent_logger.error(_msg("ERROR", f"当前页面没有出现{label}封面编辑弹窗，发布已中止"))
+            raise RuntimeError(f"未找到{label}封面编辑入口，为避免空白缩略图已中止发布")
 
         try:
             await self.upload_thumbnail_in_dialog(page, cover_dialog, thumbnail_path)
             tencent_logger.success(_msg("🥳", f"{label}封面已经设置完成"))
         except Exception as exc:
-            tencent_logger.warning(_msg("😵", f"{label}封面设置失败，这次先跳过: {exc}"))
+            raise RuntimeError(f"{label}封面设置失败，为避免空白缩略图已中止发布: {exc}") from exc
 
     async def set_thumbnail(self, page: Page) -> None:
         if not self.thumbnail_landscape_path and not self.thumbnail_portrait_path:
@@ -926,6 +927,7 @@ class TencentVideo(TencentBaseUploader):
         tencent_logger.info(_msg("🖼️", "小人准备设置封面"))
 
         landscape_selectors = [
+            'div.horizon-cover-wrap:has-text("4:3")',
             'div.horizontal-cover-wrap:has-text("4:3")',
             'div[class*="cover-wrap"]:has-text("4:3"):has-text("动态")',
             'div:has-text("视频号动态"):has-text("4:3")',
