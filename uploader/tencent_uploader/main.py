@@ -80,6 +80,9 @@ def _build_launch_kwargs(headless: bool) -> dict:
         launch_kwargs["executable_path"] = LOCAL_CHROME_PATH
     else:
         launch_kwargs["channel"] = "chromium"
+    proxy_server = os.environ.get("SAU_BROWSER_PROXY", "").strip()
+    if proxy_server:
+        launch_kwargs["proxy"] = {"server": proxy_server}
     return launch_kwargs
 
 
@@ -123,6 +126,9 @@ async def cookie_auth(account_file):
             await page.goto(TENCENT_UPLOAD_URL, timeout=120000, wait_until="domcontentloaded")
             if await _has_tencent_upload_access(page):
                 tencent_logger.success(_msg("🥳", "cookie 有效"))
+                return True
+            if page.url.startswith(f"{TENCENT_LOGIN_URL}/platform") and "/login" not in page.url:
+                tencent_logger.success(_msg("🥳", "cookie 有效，当前停在视频号助手首页"))
                 return True
 
             tencent_logger.info(_msg("🥹", f"cookie 已失效，当前页面: {page.url}"))
@@ -701,25 +707,44 @@ class TencentBaseUploader(BaseVideoUploader):
             tencent_logger.warning(_msg("📭", "本视频未声明原创（页面无入口或为可选项），跳过并继续发布"))
 
     async def wait_for_upload_complete(self, page: Page) -> None:
-        while True:
+        timeout_seconds = int(os.environ.get("SAU_TENCENT_UPLOAD_TIMEOUT_SECONDS", "1800"))
+        max_retries = int(os.environ.get("SAU_TENCENT_UPLOAD_MAX_RETRIES", "3"))
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        retries = 0
+
+        while asyncio.get_running_loop().time() < deadline:
             try:
-                publish_button = page.get_by_role("button", name="发表")
+                publish_button = page.get_by_role("button", name="发表").first
                 button_class = await publish_button.get_attribute("class")
                 if button_class and "weui-desktop-btn_disabled" not in button_class:
                     tencent_logger.info(_msg("🥳", "视频上传完毕"))
-                    break
+                    return
 
-                tencent_logger.info(_msg("🏃", "正在上传视频中..."))
-                await asyncio.sleep(2)
-
-                upload_failed = await page.locator("div.status-msg.error").count()
+                upload_error = page.locator("div.status-msg.error:visible").first
+                upload_failed = await upload_error.count()
                 delete_button = await page.locator('div.media-status-content div.tag-inner:has-text("删除")').count()
                 if upload_failed and delete_button:
-                    tencent_logger.error(_msg("😵", "发现上传出错了，准备重试"))
+                    error_text = (await upload_error.inner_text()).strip() or "平台未提供错误文本"
+                    if retries >= max_retries:
+                        raise RuntimeError(
+                            f"视频上传失败，已达到最大重试次数 {max_retries}: {error_text}"
+                        )
+                    retries += 1
+                    tencent_logger.error(
+                        _msg("😵", f"发现上传出错，第 {retries}/{max_retries} 次重试: {error_text}")
+                    )
                     await self.handle_upload_error(page)
-            except Exception:
-                tencent_logger.info(_msg("🏃", "正在上传视频中..."))
-                await asyncio.sleep(2)
+                    continue
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise TimeoutError(f"等待视频上传完成超时: {exc}") from exc
+
+            tencent_logger.info(_msg("🏃", "正在上传视频中..."))
+            await asyncio.sleep(2)
+
+        raise TimeoutError(f"等待视频上传完成超过 {timeout_seconds} 秒")
 
     async def submit_publish(self, page: Page) -> None:
         target_url_pattern = "**/post/list**"
@@ -850,23 +875,46 @@ class TencentVideo(TencentBaseUploader):
         await page.get_by_role("button", name="删除", exact=True).click()
         await self.upload_video_file(page, self.file_path)
 
-    async def open_thumbnail_dialog(self, page: Page, selectors: list[str], dialog_titles: list[str]):
+    async def open_thumbnail_dialog(
+        self,
+        page: Page,
+        selectors: list[str],
+        dialog_titles: list[str],
+        entry_mode: str,
+    ):
+        clicked = False
         for selector in selectors:
             cover_entry = page.locator(selector).first
             try:
                 if not await cover_entry.count():
                     continue
                 await cover_entry.wait_for(state="visible", timeout=3000)
-                await cover_entry.click()
-                await page.wait_for_timeout(500)
+                if entry_mode == "portrait-image":
+                    await cover_entry.locator("img.vertical-img-size").first.click()
+                elif entry_mode == "landscape-direct-edit":
+                    await cover_entry.locator("img.horizon-img-size").first.click()
+                    direct_edit = page.get_by_text("直接编辑", exact=True).first
+                    await direct_edit.wait_for(state="visible", timeout=5000)
+                    await direct_edit.click()
+                else:
+                    await cover_entry.click()
+                tencent_logger.info(_msg("🖼️", f"已点击封面入口: {selector}"))
+                clicked = True
                 break
-            except Exception:
+            except Exception as exc:
+                tencent_logger.warning(_msg("😵", f"封面入口点击失败: {selector}: {exc}"))
                 continue
 
-        for title in dialog_titles:
-            cover_dialog = page.locator("div.weui-desktop-dialog:visible").filter(has_text=title).first
-            if await cover_dialog.count():
-                return cover_dialog
+        if clicked:
+            for _ in range(10):
+                for title in dialog_titles:
+                    cover_dialog = page.locator("div.weui-desktop-dialog:visible").filter(has_text=title).first
+                    if await cover_dialog.count():
+                        tencent_logger.info(_msg("🖼️", f"已匹配封面弹窗: {title}"))
+                        return cover_dialog
+                await page.wait_for_timeout(500)
+            visible_dialogs = await page.locator("div.weui-desktop-dialog:visible").all_inner_texts()
+            tencent_logger.error(_msg("ERROR", f"封面弹窗未匹配，当前可见弹窗: {visible_dialogs}"))
         return None
 
     async def confirm_thumbnail_crop(self, page: Page) -> None:
@@ -879,8 +927,7 @@ class TencentVideo(TencentBaseUploader):
             crop_confirm_button = crop_dialog.locator(
                 'div.weui-desktop-dialog__ft button.weui-desktop-btn_primary:has-text("确定")'
             ).first
-            if await crop_confirm_button.count():
-                await crop_confirm_button.wait_for(state="visible", timeout=5000)
+            if await crop_confirm_button.count() and await crop_confirm_button.is_visible():
                 await crop_confirm_button.click()
                 await page.wait_for_timeout(1000)
         except Exception as exc:
@@ -888,7 +935,7 @@ class TencentVideo(TencentBaseUploader):
 
     async def upload_thumbnail_in_dialog(self, page: Page, cover_dialog, thumbnail_path: str) -> None:
         await cover_dialog.wait_for(state="visible", timeout=5000)
-        file_input = cover_dialog.locator('.single-cover-uploader-wrap input[type="file"]').first
+        file_input = cover_dialog.locator('input[type="file"][accept*="image"]').first
         await file_input.wait_for(state="attached", timeout=10000)
         await file_input.set_input_files(thumbnail_path)
         await page.wait_for_timeout(1000)
@@ -908,8 +955,9 @@ class TencentVideo(TencentBaseUploader):
         selectors: list[str],
         dialog_titles: list[str],
         label: str,
+        entry_mode: str,
     ) -> None:
-        cover_dialog = await self.open_thumbnail_dialog(page, selectors, dialog_titles)
+        cover_dialog = await self.open_thumbnail_dialog(page, selectors, dialog_titles, entry_mode)
         if not cover_dialog:
             tencent_logger.error(_msg("ERROR", f"当前页面没有出现{label}封面编辑弹窗，发布已中止"))
             raise RuntimeError(f"未找到{label}封面编辑入口，为避免空白缩略图已中止发布")
@@ -917,6 +965,7 @@ class TencentVideo(TencentBaseUploader):
         try:
             await self.upload_thumbnail_in_dialog(page, cover_dialog, thumbnail_path)
             tencent_logger.success(_msg("🥳", f"{label}封面已经设置完成"))
+            await page.wait_for_timeout(5000)
         except Exception as exc:
             raise RuntimeError(f"{label}封面设置失败，为避免空白缩略图已中止发布: {exc}") from exc
 
@@ -939,14 +988,6 @@ class TencentVideo(TencentBaseUploader):
             'div.vertical-cover-wrap:has-text("个人主页卡片")',
         ]
 
-        if self.thumbnail_landscape_path:
-            await self.set_single_thumbnail(
-                page,
-                self.thumbnail_landscape_path,
-                landscape_selectors,
-                ["编辑视频号动态封面", "编辑动态封面", "编辑封面"],
-                "4:3 横版",
-            )
         if self.thumbnail_portrait_path:
             await self.set_single_thumbnail(
                 page,
@@ -954,6 +995,16 @@ class TencentVideo(TencentBaseUploader):
                 portrait_selectors,
                 ["编辑个人主页卡片", "编辑封面"],
                 "3:4 竖版",
+                "portrait-image",
+            )
+        if self.thumbnail_landscape_path:
+            await self.set_single_thumbnail(
+                page,
+                self.thumbnail_landscape_path,
+                landscape_selectors,
+                ["编辑分享卡片", "编辑视频号动态封面", "编辑动态封面", "编辑封面"],
+                "4:3 横版",
+                "landscape-direct-edit",
             )
 
     async def prepare_video_for_publish(self, page: Page) -> None:
