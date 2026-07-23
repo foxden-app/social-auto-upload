@@ -30,6 +30,7 @@ KUAISHOU_MANAGE_URL_PATTERN = "**/article/manage/video?status=2&from=publish**"
 KUAISHOU_COOKIE_INVALID_SELECTOR = "div.names div.container div.name:text('机构服务')"
 KUAISHOU_PUBLISH_STRATEGY_IMMEDIATE = "immediate"
 KUAISHOU_PUBLISH_STRATEGY_SCHEDULED = "scheduled"
+KUAISHOU_SAFE_DIALOG_ACTIONS = ("我知道了", "关闭", "暂不", "取消")
 
 
 def _msg(emoji: str, text: str) -> str:
@@ -379,6 +380,29 @@ class KSBaseUploader(BaseVideoUploader):
         else:
             print("未检测到 Joyride 遮罩，继续执行")
 
+    async def wait_until_editor_unblocked(self, page: Page) -> None:
+        loading_mask = page.locator(".el-loading-mask.loading-h5.is-fullscreen")
+        if await loading_mask.count():
+            kuaishou_logger.info(_msg("🏃", "小人等待快手完成页面处理"))
+            await loading_mask.last.wait_for(state="hidden", timeout=120000)
+
+        dialog = page.locator(".cp-dialog-wrapper:visible").last
+        if not await dialog.count() or not await dialog.is_visible():
+            return
+
+        dialog_text = (await dialog.inner_text()).strip().replace("\n", " ")
+        for action_text in KUAISHOU_SAFE_DIALOG_ACTIONS:
+            action = dialog.get_by_text(action_text, exact=True).last
+            if await action.count() and await action.is_visible():
+                await action.click()
+                await dialog.wait_for(state="hidden", timeout=30000)
+                kuaishou_logger.info(
+                    _msg("🧹", f"已关闭快手提示弹窗: {action_text}")
+                )
+                return
+
+        raise RuntimeError(f"未知快手弹窗阻止填写作品描述: {dialog_text[:300]}")
+
 
 class KSVideo(KSBaseUploader):
     def __init__(
@@ -491,6 +515,7 @@ class KSVideo(KSBaseUploader):
                 pass
 
             await self.close_guide_overlay(page)
+            await self.wait_until_editor_unblocked(page)
 
             kuaishou_logger.info(_msg("✍️", "小人开始填描述和话题"))
             description_field = page.locator(
