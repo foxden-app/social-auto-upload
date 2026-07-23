@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import uploader.xiaohongshu_uploader.main as xhs_main
 
@@ -120,6 +120,31 @@ class XiaohongshuUploaderTests(unittest.TestCase):
                 ),
                 "https://creator.rednote.com/publish/publish?from=homepage&target=video",
             )
+
+    def test_submit_publish_clicks_once_then_waits_for_success(self):
+        page = MagicMock()
+        submit_button = AsyncMock()
+        page.locator.return_value.last = submit_button
+        page.wait_for_url = AsyncMock()
+
+        asyncio.run(xhs_main._submit_publish_once(page, "定时发布", "视频"))
+
+        submit_button.click.assert_awaited_once_with(timeout=30_000)
+        page.wait_for_url.assert_awaited_once_with(
+            xhs_main.XHS_PUBLISH_SUCCESS_URL_PATTERN,
+            timeout=xhs_main.XHS_PUBLISH_RESULT_TIMEOUT_MS,
+        )
+
+    def test_submit_publish_timeout_does_not_click_again(self):
+        page = MagicMock()
+        submit_button = AsyncMock()
+        page.locator.return_value.last = submit_button
+        page.wait_for_url = AsyncMock(side_effect=Exception("no success redirect"))
+
+        with self.assertRaisesRegex(TimeoutError, "远端状态待核对"):
+            asyncio.run(xhs_main._submit_publish_once(page, "发布", "图文"))
+
+        submit_button.click.assert_awaited_once_with(timeout=30_000)
 
     def test_find_xhs_qrcode_locator_prefers_scan_sibling_inside_login_box(self):
         qrcode_locator = FakeLocator("qrcode", count=1, src="data:image/png;base64,abc")
