@@ -146,6 +146,27 @@ class XiaohongshuUploaderTests(unittest.TestCase):
 
         submit_button.click.assert_awaited_once_with(timeout=30_000)
 
+    def test_submit_publish_falls_back_to_visible_publish_button(self):
+        page = MagicMock()
+        preferred_button = AsyncMock()
+        preferred_button.wait_for.side_effect = Exception("missing scheduled button")
+        fallback_button = AsyncMock()
+        page.locator.side_effect = (
+            lambda selector: MagicMock(
+                last=(
+                    fallback_button
+                    if selector == 'button:has-text("发布"):visible'
+                    else preferred_button
+                )
+            )
+        )
+        page.wait_for_url = AsyncMock()
+
+        asyncio.run(xhs_main._submit_publish_once(page, "定时发布", "视频"))
+
+        fallback_button.click.assert_awaited_once_with(timeout=30_000)
+        page.wait_for_url.assert_awaited_once()
+
     def test_find_xhs_qrcode_locator_prefers_scan_sibling_inside_login_box(self):
         qrcode_locator = FakeLocator("qrcode", count=1, src="data:image/png;base64,abc")
         scan_text_locator = FakeLocator(

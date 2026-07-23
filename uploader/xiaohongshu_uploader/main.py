@@ -60,8 +60,18 @@ def _video_upload_is_complete(text: str) -> bool:
 
 
 async def _submit_publish_once(page: Page, button_text: str, content_type: str) -> None:
-    submit_button = page.locator(f'button:has-text("{button_text}")').last
-    await submit_button.wait_for(state="visible", timeout=30_000)
+    preferred_button = page.locator(
+        f'button:has-text("{button_text}"):visible'
+    ).last
+    try:
+        await preferred_button.wait_for(state="visible", timeout=30_000)
+        submit_button = preferred_button
+    except Exception:
+        submit_button = page.locator('button:has-text("发布"):visible').last
+        await submit_button.wait_for(state="visible", timeout=30_000)
+        xiaohongshu_logger.info(
+            _msg("🧭", f"页面未显示“{button_text}”，改用当前可见发布按钮")
+        )
     await submit_button.click(timeout=30_000)
     xiaohongshu_logger.info(_msg("🏃", f"{content_type}已提交，等待平台确认结果"))
     try:
