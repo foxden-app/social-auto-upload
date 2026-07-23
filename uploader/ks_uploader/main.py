@@ -493,11 +493,9 @@ class KSVideo(KSBaseUploader):
             await self.close_guide_overlay(page)
 
             kuaishou_logger.info(_msg("✍️", "小人开始填描述和话题"))
-            description_field = (
-                page.get_by_text("描述", exact=True)
-                .locator("xpath=following-sibling::div")
-                .first
-            )
+            description_field = page.locator(
+                '#work-description-edit, [contenteditable="true"][placeholder*="作品描述"]'
+            ).first
             await description_field.wait_for(state="visible", timeout=90000)
             await description_field.click()
             await page.keyboard.press("Backspace")
