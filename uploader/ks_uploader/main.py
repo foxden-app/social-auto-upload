@@ -447,7 +447,7 @@ class KSVideo(KSBaseUploader):
 
         # Large cover images can remain in the crop modal while Kuaishou
         # finishes server-side processing after the confirm click.
-        await modal.wait_for(state="hidden", timeout=90000)
+        await modal.wait_for(state="hidden", timeout=180000)
         kuaishou_logger.success(_msg("🥳", "封面已经设置完成"))
 
     async def upload(self, playwright: Playwright) -> None:
@@ -476,13 +476,10 @@ class KSVideo(KSBaseUploader):
             kuaishou_logger.info(_msg("🧭", "小人正在赶往快手上传主页"))
             await page.wait_for_url(KUAISHOU_UPLOAD_URL_PATTERN)
 
-            upload_button = page.locator("button[class^='_upload-btn']")
-            await upload_button.wait_for(state="visible", timeout=10000)
-
-            async with page.expect_file_chooser() as fc_info:
-                await upload_button.click()
-            file_chooser = await fc_info.value
-            await file_chooser.set_files(self.file_path)
+            # The publish app can take 15-30 seconds to hydrate after the shell loads.
+            file_input = page.locator('input[type="file"]').first
+            await file_input.wait_for(state="attached", timeout=60000)
+            await file_input.set_input_files(self.file_path)
 
             await asyncio.sleep(2)
 
@@ -496,7 +493,13 @@ class KSVideo(KSBaseUploader):
             await self.close_guide_overlay(page)
 
             kuaishou_logger.info(_msg("✍️", "小人开始填描述和话题"))
-            await page.get_by_text("描述").locator("xpath=following-sibling::div").click()
+            description_field = (
+                page.get_by_text("描述", exact=True)
+                .locator("xpath=following-sibling::div")
+                .first
+            )
+            await description_field.wait_for(state="visible", timeout=90000)
+            await description_field.click()
             await page.keyboard.press("Backspace")
             await page.keyboard.press("Control+KeyA")
             await page.keyboard.press("Delete")
