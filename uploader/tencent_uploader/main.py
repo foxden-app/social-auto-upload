@@ -27,9 +27,13 @@ TENCENT_PUBLISH_STRATEGY_SCHEDULED = "scheduled"
 
 def sanitize_tencent_title(value: str) -> str:
     """Keep a title within the punctuation set accepted by WeChat Channels."""
+    allowed_special_chars = "《》“”\"'：:+＋?？%％°℃"
     title = str(value).replace("｜", "：").replace("|", "：")
-    title = re.sub(r"[，,。.!！；;、（）()【】\[\]…—–_\\/]", " ", title)
-    return re.sub(r"\s+", " ", title).strip()
+    filtered = [
+        char if char.isalnum() or char in allowed_special_chars else " "
+        for char in title
+    ]
+    return re.sub(r"\s+", " ", "".join(filtered)).strip()
 
 
 def _msg(emoji: str, text: str) -> str:

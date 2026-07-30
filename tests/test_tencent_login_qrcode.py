@@ -14,6 +14,11 @@ class TencentLoginQrcodeTests(unittest.TestCase):
 
         self.assertEqual(cleaned, "二零二六世界人工智能大会：王坚谈科学基础模型 科技相声版")
 
+    def test_title_sanitizer_removes_unsupported_hyphen(self):
+        cleaned = tencent.sanitize_tencent_title("Kimi-K3让美国AI圈坐不住，不是因为拿了第一")
+
+        self.assertEqual(cleaned, "Kimi K3让美国AI圈坐不住 不是因为拿了第一")
+
     def test_remote_qrcode_is_converted_to_data_url(self):
         locator = AsyncMock()
         locator.get_attribute.return_value = "https://open.weixin.qq.com/connect/qrcode/demo"
