@@ -65,6 +65,7 @@ class DouyinVideoUploadRequest:
     thumbnail_portrait_file: Path | None = None
     product_link: str = ""
     product_title: str = ""
+    ai_generated: bool = False
     publish_strategy: str = DOUYIN_PUBLISH_STRATEGY_IMMEDIATE
     debug: bool = True
     headless: bool = True
@@ -356,6 +357,7 @@ async def upload_video(request: DouyinVideoUploadRequest) -> Path:
         ) if request.thumbnail_portrait_file or request.thumbnail_file else None,
         productLink=request.product_link,
         productTitle=request.product_title,
+        ai_generated=request.ai_generated,
         publish_strategy=request.publish_strategy,
         debug=request.debug,
         headless=request.headless,
@@ -657,6 +659,11 @@ def build_parser() -> argparse.ArgumentParser:
     upload_video_parser.add_argument("--thumbnail-portrait", type=existing_file_path, help="Optional 3:4 portrait thumbnail path")
     upload_video_parser.add_argument("--product-link", default="", help="Optional product link")
     upload_video_parser.add_argument("--product-title", default="", help="Optional product title")
+    upload_video_parser.add_argument(
+        "--ai-generated",
+        action="store_true",
+        help="Require Douyin native declaration: 内容由AI生成",
+    )
     add_machine_output_flags(upload_video_parser)
     add_runtime_flags(upload_video_parser)
 
@@ -833,6 +840,7 @@ async def dispatch(args: argparse.Namespace) -> int:
                 thumbnail_portrait_file=args.thumbnail_portrait,
                 product_link=args.product_link,
                 product_title=args.product_title,
+                ai_generated=getattr(args, "ai_generated", False),
                 publish_strategy=publish_strategy,
                 debug=args.debug,
                 headless=args.headless,

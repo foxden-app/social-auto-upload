@@ -23,6 +23,8 @@ from utils.log import douyin_logger
 
 DOUYIN_PUBLISH_STRATEGY_IMMEDIATE = "immediate"
 DOUYIN_PUBLISH_STRATEGY_SCHEDULED = "scheduled"
+DOUYIN_AI_DECLARATION = "内容由AI生成"
+DOUYIN_OPINION_DECLARATION = "内容为个人观点或见解"
 
 
 def _msg(emoji: str, text: str) -> str:
@@ -428,11 +430,16 @@ class DouYinBaseUploader(BaseVideoUploader):
             douyin_logger.error(_msg("😢", f"设置商品链接时出错: {str(e)}"))
             return False
 
-    async def set_self_declaration(self, page: Page, declaration: str = "内容为个人观点或见解") -> None:
-        """抖音「自主声明」为发布必选项：打开声明弹窗 → 选指定类型 → 确定。
+    async def set_self_declaration(
+        self,
+        page: Page,
+        declaration: str = DOUYIN_OPINION_DECLARATION,
+        *,
+        required: bool = False,
+    ) -> None:
+        """打开抖音「自主声明」弹窗，选择指定类型并确认。
 
-        入口和弹窗都是异步渲染，等不到就记 warning 跳过、继续发布，绝不因此中断
-        （与小红书话题、视频号声明原创的容错策略保持一致）。
+        普通声明失败时保留兼容行为；AI 内容声明是合规硬条件，失败必须中断提交。
         """
         try:
             # 发布页底部「自主声明」行，未选时显示占位文案「请选择自主声明」
@@ -455,7 +462,10 @@ class DouYinBaseUploader(BaseVideoUploader):
             await dialog.wait_for(state="hidden", timeout=6000)
             douyin_logger.info(_msg("🧾", f"自主声明已选择「{declaration}」"))
         except Exception as exc:
-            douyin_logger.warning(_msg("🧾", f"自主声明设置失败，跳过该步骤继续发布：{exc}"))
+            message = f"自主声明设置失败：{declaration}：{exc}"
+            if required:
+                raise RuntimeError(message) from exc
+            douyin_logger.warning(_msg("🧾", f"{message}；跳过该步骤继续发布"))
 
     async def select_bgm(self, page: Page, bgm_name: str) -> bool:
         """为图文发布选择 BGM：可选增强功能，搜索无结果或异常均跳过不中断发布。"""
@@ -537,6 +547,7 @@ class DouYinVideo(DouYinBaseUploader):
         productTitle="",
         thumbnail_portrait_path=None,
         desc: str | None = None,
+        ai_generated: bool = False,
         publish_strategy: str = DOUYIN_PUBLISH_STRATEGY_IMMEDIATE,
         debug: bool = DEBUG_MODE,
         headless: bool = LOCAL_CHROME_HEADLESS,
@@ -556,6 +567,7 @@ class DouYinVideo(DouYinBaseUploader):
         self.productLink = productLink
         self.productTitle = productTitle
         self.desc = desc or ""
+        self.ai_generated = ai_generated
 
     async def _submit_sms_verify_code(self, page: Page, sms_input, code: str, code_file: str) -> bool:
         douyin_logger.info(_msg("✍️", f"已获取验证码，准备填入: {code}"))
@@ -739,7 +751,11 @@ class DouYinVideo(DouYinBaseUploader):
 
         await self.set_thumbnail(page)
 
-        await self.set_self_declaration(page)
+        await self.set_self_declaration(
+            page,
+            DOUYIN_AI_DECLARATION if self.ai_generated else DOUYIN_OPINION_DECLARATION,
+            required=self.ai_generated,
+        )
 
         third_part_element = '[class^="info"] > [class^="first-part"] div div.semi-switch'
         if await page.locator(third_part_element).count():
