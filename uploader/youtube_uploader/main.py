@@ -47,16 +47,30 @@ def _build_login_result(success, status, message, account_file, current_url=""):
     }
 
 
+async def _continue_to_studio(page: Page) -> None:
+    """Bypass YouTube's Chromium compatibility interstitial when it appears."""
+    for label in ("跳至 YOUTUBE 工作室", "SKIP TO YOUTUBE STUDIO", "GO TO YOUTUBE STUDIO"):
+        try:
+            link = page.get_by_text(label, exact=False).first
+            if await link.count() and await link.is_visible():
+                await link.click()
+                await page.wait_for_timeout(2500)
+                return
+        except Exception:
+            continue
+
+
 async def cookie_auth(account_file) -> bool:
     """登录态是否仍有效：带 cookie 打开 Studio，没被踢到 Google 登录页且进入了频道页即有效。"""
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True, channel="chrome")
+        browser = await playwright.chromium.launch(headless=True, channel="chromium")
         try:
             context = await browser.new_context(storage_state=account_file)
             context = await set_init_script(context)
             page = await context.new_page()
             await page.goto(STUDIO_URL, wait_until="domcontentloaded")
             await page.wait_for_timeout(3000)
+            await _continue_to_studio(page)
             url = page.url
             if "accounts.google.com" in url or "/signin" in url.lower():
                 return False
@@ -71,7 +85,7 @@ async def youtube_cookie_gen(account_file, headless: bool = False):
     """交互式登录：开浏览器让用户登录 Google/YouTube，进入频道页后保存 storage_state。"""
     async with async_playwright() as playwright:
         # 登录必须显形，让用户输账号密码/二步验证
-        browser = await playwright.chromium.launch(headless=False, channel="chrome")
+        browser = await playwright.chromium.launch(headless=False, channel="chromium")
         context = await browser.new_context()
         context = await set_init_script(context)
         page = await context.new_page()
@@ -83,6 +97,7 @@ async def youtube_cookie_gen(account_file, headless: bool = False):
                 await page.wait_for_timeout(2000)  # 让 cookie 落定
                 ok = True
                 break
+            await _continue_to_studio(page)
             await asyncio.sleep(1)
         if ok:
             await context.storage_state(path=account_file)
@@ -199,7 +214,7 @@ class YouTubeVideo(BaseVideoUploader):
 
     async def upload(self, playwright: Playwright) -> None:
         browser = await playwright.chromium.launch(
-            headless=self.headless, channel="chrome",
+            headless=self.headless, channel="chromium",
             proxy={"server": YT_PROXY} if YT_PROXY else None,
         )
         context = await browser.new_context(storage_state=self.account_file)
@@ -210,6 +225,7 @@ class YouTubeVideo(BaseVideoUploader):
         youtube_logger.info(_msg("🎬", f"开始上传: {Path(self.file_path).name}"))
         await page.goto(UPLOAD_URL, wait_until="domcontentloaded")
         await page.wait_for_timeout(3000)
+        await _continue_to_studio(page)
         if "accounts.google.com" in page.url or "signin" in page.url.lower():
             await browser.close()
             raise RuntimeError("YouTube 登录态失效，请重新执行 login")
