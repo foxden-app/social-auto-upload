@@ -14,7 +14,7 @@ the storage_state is saved. Reuse it afterwards for fully unattended uploads.
 import asyncio
 from pathlib import Path
 
-from patchright.async_api import Page, Playwright, async_playwright
+from patchright.async_api import Page, Playwright, TimeoutError as PlaywrightTimeoutError, async_playwright
 
 from conf import DEBUG_MODE
 from uploader.base_video import BaseVideoUploader
@@ -247,18 +247,33 @@ class YouTubeVideo(BaseVideoUploader):
             youtube_logger.info(_msg("✍️", "填写简介"))
             await _fill_editable(page, "#description-textarea #textbox", self.description)
 
-        # 5) 封面（处理到一定进度才允许传，失败不致命）
+        # 5) 封面是发布必需品：新频道未验证手机号时，YouTube 会静默回退到视频帧。
         if self.thumbnail_path and Path(self.thumbnail_path).exists():
+            upload_button = page.locator("ytcp-thumbnail-uploader #select-button").first
+            await upload_button.wait_for(state="visible", timeout=20000)
             try:
-                thumb_input = page.locator(
-                    "#file-loader input[type='file'], ytcp-thumbnail-uploader input[type='file']"
-                ).first
-                await thumb_input.wait_for(state="attached", timeout=20000)
-                await thumb_input.set_input_files(self.thumbnail_path)
-                await page.wait_for_timeout(2000)
-                youtube_logger.info(_msg("🖼️", "封面已上传"))
-            except Exception as exc:
-                youtube_logger.warning(_msg("⚠️", f"封面上传跳过（不影响发布）: {exc}"))
+                async with page.expect_file_chooser(timeout=10000) as chooser_info:
+                    await upload_button.click()
+                chooser = await chooser_info.value
+                await chooser.set_files(self.thumbnail_path)
+            except PlaywrightTimeoutError as error:
+                for prompt in (
+                    "如需添加自定义缩略图，请验证你的电话号码",
+                    "verify your phone number to add custom thumbnails",
+                ):
+                    verification = page.get_by_text(prompt, exact=False)
+                    if await verification.count() and await verification.first.is_visible():
+                        raise RuntimeError("YouTube 频道未完成手机号验证，自定义缩略图未生效") from error
+                raise RuntimeError("YouTube 自定义缩略图文件选择器未打开") from error
+            await page.wait_for_timeout(2000)
+            for prompt in (
+                "如需添加自定义缩略图，请验证你的电话号码",
+                "verify your phone number to add custom thumbnails",
+            ):
+                verification = page.get_by_text(prompt, exact=False)
+                if await verification.count() and await verification.first.is_visible():
+                    raise RuntimeError("YouTube 频道未完成手机号验证，自定义缩略图未生效")
+            youtube_logger.info(_msg("🖼️", "封面已上传"))
 
         # 6) 加入播放列表（连载/系列追更）。弹窗务必关闭，否则挡住后续步骤。
         if self.playlist:
@@ -322,11 +337,11 @@ class YouTubeVideo(BaseVideoUploader):
 
         # 11) 发布
         await page.wait_for_timeout(1200)
+        video_url = ""
         if not await _click_if_present(page, "#done-button", 15000):
             youtube_logger.warning(_msg("🤔", "未找到发布按钮，可能上传未到可发布进度；请在窗口里手动发布"))
         else:
             await page.wait_for_timeout(4000)
-            video_url = ""
             try:
                 link = page.locator("a[href*='youtu.be'], a[href*='watch?v=']").first
                 if await link.count():
@@ -343,7 +358,8 @@ class YouTubeVideo(BaseVideoUploader):
             pass
         await page.wait_for_timeout(2000)
         await browser.close()
+        return video_url or None
 
     async def main(self):
         async with async_playwright() as playwright:
-            await self.upload(playwright)
+            return await self.upload(playwright)

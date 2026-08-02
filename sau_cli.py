@@ -310,7 +310,7 @@ async def check_youtube_account(account_name: str) -> bool:
     return await youtube_cookie_auth(str(account_file))
 
 
-async def upload_youtube_video(request: YouTubeVideoUploadRequest) -> Path:
+async def upload_youtube_video(request: YouTubeVideoUploadRequest) -> str | None:
     account_file = resolve_account_file("youtube", request.account_name)
     is_ready = await youtube_setup(str(account_file), handle=False)
     if not is_ready:
@@ -330,8 +330,7 @@ async def upload_youtube_video(request: YouTubeVideoUploadRequest) -> Path:
         debug=request.debug,
         headless=request.headless,
     )
-    await app.main()
-    return account_file
+    return await app.main()
 
 
 async def upload_video(request: DouyinVideoUploadRequest) -> Path:
@@ -611,6 +610,9 @@ def build_machine_result(
         payload["scheduled_at"] = schedule.isoformat()
     elif schedule:
         payload["scheduled_at"] = str(schedule)
+    remote_work_id = getattr(args, "remote_work_id", None)
+    if remote_work_id:
+        payload["remote_work_id"] = str(remote_work_id)
     if error:
         payload["error"] = error
     return payload
@@ -1082,7 +1084,7 @@ async def dispatch(args: argparse.Namespace) -> int:
                 debug=args.debug,
                 headless=args.headless,
             )
-            await upload_youtube_video(request)
+            args.remote_work_id = await upload_youtube_video(request)
             print(f"YouTube video upload submitted: {request.video_file}")
             return 0
 

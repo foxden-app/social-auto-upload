@@ -3,6 +3,7 @@ import io
 import json
 import tempfile
 import unittest
+from argparse import Namespace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -10,6 +11,21 @@ import sau_cli
 
 
 class MachineOutputTests(unittest.TestCase):
+    def test_machine_result_includes_remote_work_id(self):
+        payload = sau_cli.build_machine_result(
+            Namespace(
+                platform="youtube",
+                action="upload-video",
+                account="wuya-youtube",
+                file=None,
+                schedule=None,
+                remote_work_id="https://youtu.be/example",
+            ),
+            0,
+        )
+
+        self.assertEqual(payload["remote_work_id"], "https://youtu.be/example")
+
     def test_json_output_is_one_clean_document(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             result_file = Path(tmp_dir) / "result.json"
