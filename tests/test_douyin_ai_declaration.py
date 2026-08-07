@@ -2,7 +2,7 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from sau_cli import build_parser
 from uploader.douyin_uploader.main import (
@@ -69,6 +69,32 @@ class DouyinAiDeclarationTests(unittest.TestCase):
                     required=True,
                 )
             )
+
+    def test_thumbnail_accepts_hidden_cover_modal(self):
+        video = DouYinVideo(
+            "title",
+            "video.mp4",
+            [],
+            0,
+            "cookie.json",
+            thumbnail_portrait_path="cover.png",
+        )
+        page = MagicMock()
+        page.evaluate = AsyncMock()
+        page.wait_for_selector = AsyncMock()
+        page.wait_for_timeout = AsyncMock()
+        page.get_by_text.return_value.first.click = AsyncMock()
+
+        cover = MagicMock()
+        cover.locator.return_value.nth.return_value.set_input_files = AsyncMock()
+        cover.get_by_text.return_value.first.click = AsyncMock()
+        cover.get_by_role.return_value.first.click = AsyncMock()
+        cover.wait_for = AsyncMock()
+        page.locator.return_value.first = cover
+
+        asyncio.run(video.set_thumbnail(page))
+
+        cover.wait_for.assert_awaited_once_with(state="hidden", timeout=20000)
 
 
 if __name__ == "__main__":

@@ -681,7 +681,8 @@ class DouYinVideo(DouYinBaseUploader):
         # 点红色主按钮“完成”应用封面（exact 避免误中“完成编辑”）
         await cover_locator.get_by_role("button", name="完成", exact=True).first.click()
         douyin_logger.info(_msg("🥳", "视频封面设置完成"))
-        await cover_locator.wait_for(state="detached", timeout=20000)
+        # 新版创作者中心会隐藏弹窗但保留 DOM；等待 detached 会在提交前误报超时。
+        await cover_locator.wait_for(state="hidden", timeout=20000)
 
     async def upload(self, playwright: Playwright) -> None:
         douyin_logger.info(_msg("🧍", "小人先检查 cookie、视频文件、封面和发布时间"))
