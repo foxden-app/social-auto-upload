@@ -31,6 +31,12 @@ except Exception:
 STUDIO_URL = "https://studio.youtube.com"
 UPLOAD_URL = "https://www.youtube.com/upload"
 VISIBILITY = {"public": "PUBLIC", "unlisted": "UNLISTED", "private": "PRIVATE"}
+THUMBNAIL_VERIFICATION_MARKERS = (
+    "如需添加自定义缩略图，请验证你的电话号码",
+    "要添加自定义缩略图，请验证手机号",
+    "verify your phone number to add custom thumbnails",
+    "to add custom thumbnails, verify your phone number",
+)
 
 
 def _msg(emoji: str, text: str) -> str:
@@ -169,6 +175,35 @@ async def _click_if_present(page: Page, selector: str, timeout: int = 4000) -> b
         return False
 
 
+def is_thumbnail_verification_text(value: str) -> bool:
+    text = " ".join(str(value or "").lower().split())
+    return any(marker.lower() in text for marker in THUMBNAIL_VERIFICATION_MARKERS)
+
+
+async def _thumbnail_verification_visible(page: Page) -> bool:
+    try:
+        return is_thumbnail_verification_text(await page.locator("body").inner_text())
+    except Exception:
+        return False
+
+
+async def _wait_for_uploaded_thumbnail(page: Page) -> None:
+    preview = page.locator("ytcp-thumbnail-uploader #preview-button").first
+    try:
+        await preview.wait_for(state="visible", timeout=30000)
+        image = preview.locator("img").first
+        await image.wait_for(state="visible", timeout=10000)
+        if not await image.get_attribute("src"):
+            raise RuntimeError("YouTube 自定义缩略图预览为空")
+        uploading = preview.locator(".uploading").first
+        if await uploading.count() and await uploading.is_visible():
+            await uploading.wait_for(state="hidden", timeout=30000)
+    except PlaywrightTimeoutError as error:
+        if await _thumbnail_verification_visible(page):
+            raise RuntimeError("YouTube 频道未完成手机号验证，自定义缩略图未生效") from error
+        raise RuntimeError("YouTube 自定义缩略图没有形成已选预览") from error
+
+
 async def _wait_upload_complete(page: Page, max_polls: int = 360) -> bool:
     """等网页上传从 X% 跑到 100% 再发布。浏览器上传靠窗口开着才传得完，
     若上传到一半就点发布并关闭浏览器，上传会被掐断卡在中途（如 76%）。
@@ -257,23 +292,11 @@ class YouTubeVideo(BaseVideoUploader):
                 chooser = await chooser_info.value
                 await chooser.set_files(self.thumbnail_path)
             except PlaywrightTimeoutError as error:
-                for prompt in (
-                    "如需添加自定义缩略图，请验证你的电话号码",
-                    "verify your phone number to add custom thumbnails",
-                ):
-                    verification = page.get_by_text(prompt, exact=False)
-                    if await verification.count() and await verification.first.is_visible():
-                        raise RuntimeError("YouTube 频道未完成手机号验证，自定义缩略图未生效") from error
+                if await _thumbnail_verification_visible(page):
+                    raise RuntimeError("YouTube 频道未完成手机号验证，自定义缩略图未生效") from error
                 raise RuntimeError("YouTube 自定义缩略图文件选择器未打开") from error
-            await page.wait_for_timeout(2000)
-            for prompt in (
-                "如需添加自定义缩略图，请验证你的电话号码",
-                "verify your phone number to add custom thumbnails",
-            ):
-                verification = page.get_by_text(prompt, exact=False)
-                if await verification.count() and await verification.first.is_visible():
-                    raise RuntimeError("YouTube 频道未完成手机号验证，自定义缩略图未生效")
-            youtube_logger.info(_msg("🖼️", "封面已上传"))
+            await _wait_for_uploaded_thumbnail(page)
+            youtube_logger.info(_msg("🖼️", "封面已上传并形成已选预览"))
 
         # 6) 加入播放列表（连载/系列追更）。弹窗务必关闭，否则挡住后续步骤。
         if self.playlist:
