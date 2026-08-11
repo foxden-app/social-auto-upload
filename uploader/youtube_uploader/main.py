@@ -12,6 +12,7 @@ Login is interactive (Google account, no QR code): the browser opens, the user s
 the storage_state is saved. Reuse it afterwards for fully unattended uploads.
 """
 import asyncio
+import re
 from pathlib import Path
 
 from patchright.async_api import Page, Playwright, TimeoutError as PlaywrightTimeoutError, async_playwright
@@ -30,6 +31,10 @@ except Exception:
 
 STUDIO_URL = "https://studio.youtube.com"
 UPLOAD_URL = "https://www.youtube.com/upload"
+YOUTUBE_CONTEXT_OPTIONS = {
+    "locale": "zh-CN",
+    "extra_http_headers": {"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.6"},
+}
 VISIBILITY = {"public": "PUBLIC", "unlisted": "UNLISTED", "private": "PRIVATE"}
 THUMBNAIL_VERIFICATION_MARKERS = (
     "如需添加自定义缩略图，请验证你的电话号码",
@@ -66,21 +71,29 @@ async def _continue_to_studio(page: Page) -> None:
             continue
 
 
+async def _wait_for_studio_channel(page: Page, max_checks: int = 60) -> bool:
+    """Wait for Studio's root SPA to resolve to either a channel or sign-in page."""
+    for _ in range(max_checks):
+        url = page.url
+        if "accounts.google.com" in url or "/signin" in url.lower():
+            return False
+        if "/channel/" in url:
+            return True
+        await _continue_to_studio(page)
+        await page.wait_for_timeout(1000)
+    return False
+
+
 async def cookie_auth(account_file) -> bool:
     """登录态是否仍有效：带 cookie 打开 Studio，没被踢到 Google 登录页且进入了频道页即有效。"""
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=True, channel="chromium")
         try:
-            context = await browser.new_context(storage_state=account_file)
+            context = await browser.new_context(storage_state=account_file, **YOUTUBE_CONTEXT_OPTIONS)
             context = await set_init_script(context)
             page = await context.new_page()
             await page.goto(STUDIO_URL, wait_until="domcontentloaded")
-            await page.wait_for_timeout(3000)
-            await _continue_to_studio(page)
-            url = page.url
-            if "accounts.google.com" in url or "/signin" in url.lower():
-                return False
-            return "/channel/" in url
+            return await _wait_for_studio_channel(page)
         except Exception:
             return False
         finally:
@@ -92,7 +105,7 @@ async def youtube_cookie_gen(account_file, headless: bool = False):
     async with async_playwright() as playwright:
         # 登录必须显形，让用户输账号密码/二步验证
         browser = await playwright.chromium.launch(headless=False, channel="chromium")
-        context = await browser.new_context()
+        context = await browser.new_context(**YOUTUBE_CONTEXT_OPTIONS)
         context = await set_init_script(context)
         page = await context.new_page()
         await page.goto(STUDIO_URL, wait_until="domcontentloaded")
@@ -175,6 +188,31 @@ async def _click_if_present(page: Page, selector: str, timeout: int = 4000) -> b
         return False
 
 
+async def _set_not_for_kids(page: Page) -> bool:
+    selectors = (
+        "tp-yt-paper-radio-button[name='VIDEO_MADE_FOR_KIDS_NOT_MFK']",
+        "tp-yt-paper-radio-button:has-text('not made for kids')",
+        "tp-yt-paper-radio-button:has-text('不是面向儿童')",
+    )
+    for selector in selectors:
+        candidates = page.locator(selector)
+        for index in range(await candidates.count() - 1, -1, -1):
+            option = candidates.nth(index)
+            try:
+                if not await option.is_visible():
+                    continue
+                try:
+                    await option.click(timeout=5000)
+                except Exception:
+                    await option.click(timeout=5000, force=True)
+                await page.wait_for_timeout(300)
+                if (await option.get_attribute("aria-checked") or "false").lower() == "true":
+                    return True
+            except Exception:
+                continue
+    return False
+
+
 def is_thumbnail_verification_text(value: str) -> bool:
     text = " ".join(str(value or "").lower().split())
     return any(marker.lower() in text for marker in THUMBNAIL_VERIFICATION_MARKERS)
@@ -204,18 +242,40 @@ async def _wait_for_uploaded_thumbnail(page: Page) -> None:
         raise RuntimeError("YouTube 自定义缩略图没有形成已选预览") from error
 
 
+async def _done_button_ready(page: Page) -> bool:
+    """Studio enables the final button only after the upload can be submitted."""
+    try:
+        button = page.locator("#done-button").first
+        if not await button.count() or not await button.is_visible(timeout=1000):
+            return False
+        if await button.get_attribute("disabled", timeout=1000) is not None:
+            return False
+        return (await button.get_attribute("aria-disabled", timeout=1000) or "false").lower() != "true"
+    except Exception:
+        return False
+
+
 async def _wait_upload_complete(page: Page, max_polls: int = 360) -> bool:
     """等网页上传从 X% 跑到 100% 再发布。浏览器上传靠窗口开着才传得完，
     若上传到一半就点发布并关闭浏览器，上传会被掐断卡在中途（如 76%）。
     出现“处理/检查/上传完成”或不再“正在上传”即视为传完。max_polls*5s=30min 上限。"""
     last = ""
-    for _ in range(max_polls):
+    ready_polls = 0
+    deadline = asyncio.get_running_loop().time() + max_polls * 5
+    while asyncio.get_running_loop().time() < deadline:
+        if await _done_button_ready(page):
+            ready_polls += 1
+            if ready_polls >= 2:
+                youtube_logger.info(_msg("✅", "发布按钮已就绪，上传可以提交"))
+                return True
+        else:
+            ready_polls = 0
         txt = ""
         for sel in (".progress-label", "span.progress-label", "ytcp-video-upload-progress"):
             loc = page.locator(sel).first
             try:
                 if await loc.count():
-                    txt = (await loc.inner_text()).strip()
+                    txt = (await loc.inner_text(timeout=1000)).strip()
                     if txt:
                         break
             except Exception:
@@ -230,6 +290,99 @@ async def _wait_upload_complete(page: Page, max_polls: int = 360) -> bool:
         await page.wait_for_timeout(5000)
     youtube_logger.warning(_msg("⚠️", "等上传超时(30min)，仍尝试发布"))
     return False
+
+
+def _video_id_from_studio_url(value: str) -> str:
+    match = re.search(r"/video/([A-Za-z0-9_-]{6,})", value or "")
+    return match.group(1) if match else ""
+
+
+async def finalize_youtube_draft(
+    account_file: str,
+    title: str,
+    *,
+    visibility: str = "public",
+    headless: bool = True,
+) -> str:
+    """Finalize an already uploaded Studio draft without uploading the media again."""
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            headless=headless,
+            channel="chromium",
+            proxy={"server": YT_PROXY} if YT_PROXY else None,
+        )
+        context = await browser.new_context(storage_state=account_file, **YOUTUBE_CONTEXT_OPTIONS)
+        context = await set_init_script(context)
+        page = await context.new_page()
+        page.set_default_timeout(60000)
+        page.set_default_navigation_timeout(120000)
+        try:
+            await page.goto(STUDIO_URL, wait_until="domcontentloaded")
+            if not await _wait_for_studio_channel(page):
+                raise RuntimeError("YouTube 登录态失效，请重新执行 login")
+            channel_match = re.search(r"(https://studio\.youtube\.com/channel/[^/?#]+)", page.url)
+            if not channel_match:
+                raise RuntimeError(f"YouTube Studio 频道地址异常: {page.url}")
+            content_url = f"{channel_match.group(1)}/videos/upload"
+            await page.goto(content_url, wait_until="domcontentloaded")
+            await _continue_to_studio(page)
+            if "/videos/upload" not in page.url:
+                await page.goto(content_url, wait_until="domcontentloaded")
+            await page.wait_for_timeout(2500)
+            row = page.locator("ytcp-video-row").filter(has_text=title).first
+            try:
+                await row.wait_for(state="visible", timeout=45000)
+            except PlaywrightTimeoutError as error:
+                visible_titles = await page.locator("a#video-title").all_inner_texts()
+                screenshot = Path("/tmp/youtube-draft-content.png")
+                await page.screenshot(path=screenshot, full_page=True)
+                raise RuntimeError(
+                    f"YouTube 内容页未找到目标草稿；url={page.url}; "
+                    f"visible_titles={visible_titles[:12]}; screenshot={screenshot}"
+                ) from error
+            title_link = row.locator("a#video-title, #video-title").first
+            href = await title_link.get_attribute("href") or ""
+            video_id = _video_id_from_studio_url(href)
+            await title_link.click()
+            await page.locator("#title-textarea").wait_for(state="visible", timeout=120000)
+            if not video_id:
+                video_id = _video_id_from_studio_url(page.url)
+
+            if not await _set_not_for_kids(page):
+                raise RuntimeError("YouTube 草稿未能确认非儿童向受众设置")
+            for _ in range(5):
+                option = page.locator(f"tp-yt-paper-radio-button[name='{VISIBILITY.get(visibility, 'PUBLIC')}']").first
+                if await option.count() and await option.is_visible(timeout=1000):
+                    break
+                if not await _click_if_present(page, "#next-button", 5000):
+                    await page.wait_for_timeout(1000)
+                await page.wait_for_timeout(800)
+            await _click_if_present(
+                page,
+                f"tp-yt-paper-radio-button[name='{VISIBILITY.get(visibility, 'PUBLIC')}']",
+                10000,
+            )
+            for _ in range(600):
+                if await _done_button_ready(page):
+                    break
+                await page.wait_for_timeout(1000)
+            else:
+                raise RuntimeError("YouTube 草稿十分钟内仍未达到可发布状态")
+            if not await _click_if_present(page, "#done-button", 10000):
+                raise RuntimeError("YouTube 草稿发布按钮不可用")
+            await page.wait_for_timeout(5000)
+            if not video_id:
+                link = page.locator("a[href*='youtu.be'], a[href*='watch?v=']").first
+                if await link.count():
+                    value = await link.get_attribute("href") or ""
+                    match = re.search(r"(?:youtu\.be/|[?&]v=)([A-Za-z0-9_-]{6,})", value)
+                    video_id = match.group(1) if match else ""
+            if not video_id:
+                raise RuntimeError("YouTube 草稿已提交，但未能取得视频 ID")
+            await context.storage_state(path=account_file)
+            return f"https://youtu.be/{video_id}"
+        finally:
+            await browser.close()
 
 
 class YouTubeVideo(BaseVideoUploader):
@@ -252,10 +405,11 @@ class YouTubeVideo(BaseVideoUploader):
             headless=self.headless, channel="chromium",
             proxy={"server": YT_PROXY} if YT_PROXY else None,
         )
-        context = await browser.new_context(storage_state=self.account_file)
+        context = await browser.new_context(storage_state=self.account_file, **YOUTUBE_CONTEXT_OPTIONS)
         context = await set_init_script(context)
         page = await context.new_page()
         page.set_default_timeout(60000)
+        page.set_default_navigation_timeout(120000)
 
         youtube_logger.info(_msg("🎬", f"开始上传: {Path(self.file_path).name}"))
         await page.goto(UPLOAD_URL, wait_until="domcontentloaded")
@@ -298,7 +452,11 @@ class YouTubeVideo(BaseVideoUploader):
             await _wait_for_uploaded_thumbnail(page)
             youtube_logger.info(_msg("🖼️", "封面已上传并形成已选预览"))
 
-        # 6) 加入播放列表（连载/系列追更）。弹窗务必关闭，否则挡住后续步骤。
+        # 6) 受众：非儿童向（必填）。先设置受众，避免后续播放列表浮层遮挡控件。
+        if not await _set_not_for_kids(page):
+            raise RuntimeError("YouTube 未能确认非儿童向受众设置")
+
+        # 7) 加入播放列表（连载/系列追更）。弹窗务必关闭，否则挡住后续步骤。
         if self.playlist:
             try:
                 await _click_if_present(
@@ -324,10 +482,6 @@ class YouTubeVideo(BaseVideoUploader):
                 await _click_if_present(page, "ytcp-playlist-dialog #save-button, ytcp-button:has-text('Done'), ytcp-button:has-text('完成')", 3000)
                 await page.keyboard.press("Escape")
                 await page.wait_for_timeout(600)
-
-        # 7) 受众：非儿童向（必填）
-        if not await _click_if_present(page, "tp-yt-paper-radio-button[name='VIDEO_MADE_FOR_KIDS_NOT_MFK']", 10000):
-            await _click_if_present(page, "tp-yt-paper-radio-button:has-text('not made for kids'), tp-yt-paper-radio-button:has-text('不是面向儿童')", 6000)
 
         # 8) 标签（“显示更多”里）
         if self.tags:

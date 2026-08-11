@@ -549,9 +549,9 @@ class TencentBaseUploader(BaseVideoUploader):
         async def find_file_input():
             for fr in page.frames:  # 主 frame + 所有 iframe（视频号编辑器可能在 iframe 内）
                 try:
-                    fi = fr.locator('input[type="file"]')
-                    if await fi.count():
-                        return fi.first
+                    fi = fr.locator('input[type="file"]').first
+                    await fi.wait_for(state="attached", timeout=200)
+                    return fi
                 except Exception:
                     continue
             return None
@@ -565,10 +565,13 @@ class TencentBaseUploader(BaseVideoUploader):
             # 新版视频号会先把 /post/create 重定向到助手首页，再异步恢复编辑器。
             # 等待期间反复查找首页入口，避免只在入口尚未出现时检查一次。
             for fr in page.frames:
-                publish_btn = fr.get_by_text("发表视频", exact=True).first
-                if await publish_btn.count() and await publish_btn.is_visible():
-                    await publish_btn.click()
-                    break
+                try:
+                    publish_btn = fr.get_by_text("发表视频", exact=True).first
+                    if await publish_btn.is_visible():
+                        await publish_btn.click()
+                        break
+                except Exception:
+                    continue
 
             if attempt == 15 and "/platform/post/create" not in page.url:
                 await page.goto(TENCENT_UPLOAD_URL, timeout=120000, wait_until="domcontentloaded")

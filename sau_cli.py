@@ -46,6 +46,7 @@ from uploader.xiaohongshu_uploader.main import (
 from uploader.youtube_uploader.main import (
     YouTubeVideo,
     cookie_auth as youtube_cookie_auth,
+    finalize_youtube_draft,
     youtube_setup,
 )
 
@@ -810,6 +811,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--visibility", default="public", choices=["public", "unlisted", "private"], help="Video visibility")
     add_machine_output_flags(youtube_upload_video_parser)
     add_runtime_flags(youtube_upload_video_parser)
+
+    youtube_finalize_parser = youtube_actions.add_parser(
+        "finalize-draft", help="Publish an existing YouTube Studio draft without reuploading")
+    youtube_finalize_parser.add_argument("--account", required=True, help="YouTube user-defined account_name")
+    youtube_finalize_parser.add_argument("--title", required=True, help="Exact draft title")
+    youtube_finalize_parser.add_argument(
+        "--visibility", default="public", choices=["public", "unlisted", "private"], help="Video visibility")
+    add_machine_output_flags(youtube_finalize_parser)
+    add_runtime_flags(youtube_finalize_parser)
     return parser
 
 
@@ -1086,6 +1096,21 @@ async def dispatch(args: argparse.Namespace) -> int:
             )
             args.remote_work_id = await upload_youtube_video(request)
             print(f"YouTube video upload submitted: {request.video_file}")
+            return 0
+
+        if args.action == "finalize-draft":
+            account_file = resolve_account_file("youtube", args.account)
+            if not await youtube_setup(str(account_file), handle=False):
+                raise RuntimeError(
+                    f"YouTube cookie is missing or expired: {account_file}. Run `sau youtube login --account {args.account}` first."
+                )
+            args.remote_work_id = await finalize_youtube_draft(
+                str(account_file),
+                args.title,
+                visibility=args.visibility,
+                headless=args.headless,
+            )
+            print(f"YouTube draft finalized: {args.remote_work_id}")
             return 0
 
         raise RuntimeError(f"Unsupported YouTube action: {args.action}")

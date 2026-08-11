@@ -204,6 +204,23 @@ class TencentThumbnailTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "最大重试次数"):
                 asyncio.run(uploader.wait_for_upload_complete(page))
 
+    def test_upload_file_does_not_depend_on_locator_count(self):
+        uploader = make_uploader()
+        page = MagicMock()
+        file_input = MagicMock()
+        file_input.wait_for = AsyncMock()
+        file_input.set_input_files = AsyncMock()
+        file_input_locator = MagicMock(first=file_input)
+        frame = MagicMock()
+        frame.locator.return_value = file_input_locator
+        page.frames = [frame]
+
+        asyncio.run(uploader.upload_video_file(page, "video.mp4"))
+
+        file_input.wait_for.assert_awaited_once_with(state="attached", timeout=200)
+        file_input.set_input_files.assert_awaited_once_with("video.mp4")
+        file_input.count.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
